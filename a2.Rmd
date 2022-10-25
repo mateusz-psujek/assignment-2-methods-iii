@@ -55,13 +55,18 @@ BONUS question: assess the effect of task on the estimates (model comparison wit
 
 # Questions:
 ```
-```{r}
-# to i want to save all levels? is so in one tibble?
-# End goal: 
-        # study     # mean    # sigma
+1. Simulate data 
+to setup the analysis and gain insight on the structure of the problem. Simulate one dataset of 100 studies (n of participants should follow a normal distribution with mean of 20, sd of 10, but no fewer than 10 participants), with a mean effect size of 0.4, average deviation by study of .4 and measurement error of .8. The data you get should have one row per study, with an effect size mean and standard error.
+Then simulate publication bias (only some of the studies you simulate are likely to be published, which?)
+2. Build a proper bayesian model to analyze the simulated data.
+3. re-run the model on published studies, assess the difference, 
+4. discuss what this implies for your model
+5. remember to use at least one plot to visualize your results. 
+6. BONUS question: do a power/precision analysis: w this kind of sample sizes (participants) how many studies would you need to acquire good precision (e.g. .1 sd in the pop level estimate)
 
+```{r}
 simulate_data <- function(n = 100, gt_mean = 0.4, gt_sd = 0.4, error = 0.8, seed = 1)
-  #expaning the names: n - number of studies, gt stands for 'ground-truth', mes stands for measurement or measured
+  #expaning the names: n - number of studies, gt stands for 'ground-truth'
   {
   set.seed(seed)
     
@@ -75,7 +80,7 @@ simulate_data <- function(n = 100, gt_mean = 0.4, gt_sd = 0.4, error = 0.8, seed
            ci_lower = effect - 1.96 * sigma, # just so it's easier to plot later
            ci_upper = effect + 1.96 * sigma, 
            signif = if_else(abs(effect) - 1.96 * sigma > 0, 'yes' , 'no'),
-           pub = if_else(signif == 'yes' & effect > 0, rbinom(1, 1, 0.9), rbinom(1, 1, 0.2))) %>% 
+           pub = if_else(signif == 'yes' & effect > 0, rbinom(1, 1, 0.9), rbinom(1, 1, 0.1))) %>% 
     ungroup %>% 
     relocate(c(t_effect, n_participants, ind_effects), .after = pub)
 
@@ -87,6 +92,7 @@ data <- simulate_data()
 check <- simulate_data(n = 10000)
 
 check %>% summarise(mean(t_effect), sd(t_effect))
+
 
 
 n_tot <- check %>%
@@ -115,8 +121,8 @@ effect_hist <- function(data){
     theme_minimal()
 }
 
-effect_hist(check)
-effect_hist(check %>% filter(pub == 1))
+effect_hist(check) + ggtitle("All studies")
+effect_hist(check %>% filter(pub == 1)) + ggtitle("Published studies")
 
 ```
 
@@ -138,7 +144,7 @@ ggplot(aes(x = index, y = effect, fill = index)) +
 
 
 
-#rm(check)
+rm(check)
 ```
 ```{r}
 f <- bf(effect | se(sigma) ~ 1 + (1|study))
@@ -227,7 +233,7 @@ bind_rows(
     mutate(index = 'prior') %>% 
     mutate(.variable = if_else(.variable == 'prior_Intercept', 'Intercept', 'SD'))
   ) %>%
-    ggplot(aes(x = .value, fill = index, alpha = 0.3))+
+    ggplot(aes(x = .value, fill = index, alpha = 0.3)) +
       geom_density() +
     facet_grid(~ .variable) +
     theme_minimal() +
@@ -243,7 +249,7 @@ pp_update_plot(m_pub)
 
 
 ```{r}
-rbind(gather_draws(m_all, c(b_Intercept, sd_study__Intercept)) %>% mean_qi, 
+bind_rows(gather_draws(m_all, c(b_Intercept, sd_study__Intercept)) %>% mean_qi, 
       gather_draws(m_pub, c(b_Intercept, sd_study__Intercept)) %>% mean_qi) %>% 
   mutate(t_value = rep(c(0.4, 0.4), times = 2),
          model = rep(c("all", "pub"), each = 2)) %>% 
@@ -266,10 +272,9 @@ rbind(gather_draws(m_all, c(b_Intercept, sd_study__Intercept)) %>% mean_qi,
 
 ```{r}
 save.image('a2_part1.Rdata')
-x <- ls()
-x <- x[x != 'data']
 
-rm(list = x)
+
+rm(list = ls())
 
 data <- read_excel('Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx')
 
@@ -293,8 +298,8 @@ x <- data2 %>%
                names_pattern = '(.*)__(..).*')
 
 
-x <- data2 %>% select(4:17) %>%
-  pivot_longer(cols = everything(), 
+y <- data2 %>%
+  pivot_longer(cols = 4:21, 
                names_to = c('.value', 'diagnosis'),
                names_sep= '__')
 
