@@ -1,0 +1,356 @@
+---
+title: "Assignment 2 - Meta-analysis of pitch in schizophrenia"
+author: "Riccardo Fusaroli"
+date: "16/8/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#install.packages(pacman)
+library(pacman)
+pacman::p_load(tidyverse, brms, tidybayes, conflicted, msm, readxl)
+
+conflict_scout() #checking any possible conflicts between packages
+conflict_prefer('ar', 'brms')
+conflict_prefer('filter', 'dplyr')
+conflict_prefer('lag', 'dplyr') #choosing the packages to prefer if conflict arises
+```
+
+# Assignment 2: meta-analysis
+
+## Questions to be answered
+
+1. Simulate data to setup the analysis and gain insight on the structure of the problem. Simulate one dataset of 100 studies (n of participants should follow a normal distribution with mean of 20, sd of 10, but no fewer than 10 participants), with a mean effect size of 0.4, average deviation by study of .4 and measurement error of .8. The data you get should have one row per study, with an effect size mean and standard error. Build a proper bayesian model to analyze the simulated data. Then simulate publication bias (only some of the studies you simulate are likely to be published, which?), the effect of publication bias on your estimates (re-run the model on published studies, assess the difference), and discuss what this implies for your model. remember to use at least one plot to visualize your results. 
+BONUS question: do a power/precision analysis: w this kind of sample sizes (participants) how many studies would you need to acquire good precision (e.g. .1 sd in the pop level estimate)
+
+2. What is the current evidence for distinctive vocal patterns in schizophrenia? 
+Use the data from Parola et al (2020) - https://www.dropbox.com/s/0l9ur0gaabr80a8/Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx?dl=0 - focusing on pitch variability (PITCH_F0SD).  Describe the data available (studies, participants). Using the model from question 1 analyze the data, visualize and report the findings: population level effect size; how well studies reflect it; influential studies, publication bias. 
+BONUS question: assess the effect of task on the estimates (model comparison with baseline model)
+
+
+# Question 1
+
+```{r}
+# arabic digits - simulation
+# ---> model fitting
+# 1. Ground truth level: the real underlying truth  - norm(0.4,0.4)
+# 2. Sample level(Study level: 100 samples(studies) - norm(mu drawn from the above, sd drawn from the above)
+# 3. Participant level: tnorm(20, 10, 10) participants in each study
+# 4. Results level: estimates of regressions based on the participants
+#        -->(I) Fit no. 1 Bayes model: Given the study results what are the estimated true parameters???
+# 5. Published results level: include publication bias filter
+#        -->(II) Fit no. 2 Bayes model: Given the **publilshed** results what are the estimated true parameters???
+#       --> Compare the 2 models
+
+
+#to_do:
+#     - (done) does he model the pitch for 2 healthy and schizophrenic participants (how if only one distribution) or just the difference (how if you have to model individual participants as well)?
+          #answer: the slides show he just models the difference
+#     - really dumb you have to check stuff like that xd but check whether it really means significance
+#     - (optional) maybe it would be nice to put the type of the bias and the values as function arguments
+#     - do you want model comparision to be wrapped by .variable or model???
+#     - **check what would removing the outliers do to model estimates!**
+
+# Questions:
+```
+```{r}
+# to i want to save all levels? is so in one tibble?
+# End goal: 
+        # study     # mean    # sigma
+
+simulate_data <- function(n = 100, gt_mean = 0.4, gt_sd = 0.4, error = 0.8, seed = 1)
+  #expaning the names: n - number of studies, gt stands for 'ground-truth', mes stands for measurement or measured
+  {
+  set.seed(seed)
+    
+  data <- tibble(study = seq(1, n, by = 1)) %>% 
+    rowwise %>% 
+    mutate(t_effect = rnorm(1, gt_mean, gt_sd) %>% round(2), 
+           n_participants = rtnorm(1, 20, 10, lower = 10) %>% round,
+           ind_effects = list(rnorm(n_participants, mean = t_effect, sd = error) %>% round(2)),
+           effect = mean(ind_effects),
+           sigma = sd(ind_effects) / sqrt(n_participants), 
+           ci_lower = effect - 1.96 * sigma, # just so it's easier to plot later
+           ci_upper = effect + 1.96 * sigma, 
+           signif = if_else(abs(effect) - 1.96 * sigma > 0, 'yes' , 'no'),
+           pub = if_else(signif == 'yes' & effect > 0, rbinom(1, 1, 0.9), rbinom(1, 1, 0.2))) %>% 
+    ungroup %>% 
+    relocate(c(t_effect, n_participants, ind_effects), .after = pub)
+
+}
+data <- simulate_data()  
+```
+### Checking if all worked fine
+```{r}
+check <- simulate_data(n = 10000)
+
+check %>% summarise(mean(t_effect), sd(t_effect))
+
+
+n_tot <- check %>%
+  count(signif == 'yes' & effect > 0) %>%
+  pull(n)
+check %>% filter(pub == 1) %>%
+  count(signif == 'yes' & effect > 0, pub) %>%
+  mutate(pct = n / n_tot)
+
+rm(n_tot)
+```
+
+
+```{r}
+effect_hist <- function(data){
+  ggplot(data, aes(x = effect)) +
+    geom_histogram(binwidth = 0.1, fill = 'darkgreen', color = 'black', alpha = 0.1) +
+    geom_vline(aes(xintercept = 0.4, color = 'real effect size'),
+               linetype = 'dashed', size = 0.6) +
+    geom_vline(aes(xintercept = mean(effect), color = 'calculated mean effect size'),
+               linetype = 'dashed', size = 0.6) +
+    scale_x_continuous(n.breaks = 8) +
+    labs(x = expression(paste('Effect', ' ', mu)),
+         y = 'Count') +
+    scale_color_manual(name = element_blank(), values = c(`real effect size` = "black", `calculated mean effect size` = "darkgreen")) +
+    theme_minimal()
+}
+
+effect_hist(check)
+effect_hist(check %>% filter(pub == 1))
+
+```
+
+
+```{r}
+rbind(check %>% mutate(index = 'all'),
+      check %>% filter(pub == 1) %>% mutate(index = 'published')) %>% 
+ggplot(aes(x = index, y = effect, fill = index)) + 
+  geom_boxplot(alpha = 0.3) +
+  theme_minimal() +
+  guides(alpha = 'none') +
+  scale_fill_manual(values = c('navy', 'darkgreen'), 
+                    labels = c('all studies', 'published studies'), 
+                    name = element_blank()) +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = 'top')
+
+
+
+
+#rm(check)
+```
+```{r}
+f <- bf(effect | se(sigma) ~ 1 + (1|study))
+
+get_prior(f, data)
+
+```
+```{r}
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(normal(0, 0.6), class = sd))
+```
+```{r}
+prior_m_all <- brm(f,
+                   data,
+                   family = gaussian,
+                   prior = priors,
+                   sample_prior = 'only',
+                   backend = 'cmdstanr',
+                   cores = 3
+                   )
+
+```
+
+```{r}
+pp_check(prior_m_all, ndraws = 100)
+
+summary(prior_m_all)
+```
+```{r}
+m_all <- brm(f, 
+             data,
+             family = gaussian,
+             prior = priors,
+             sample_prior = T,
+             backend = 'cmdstanr',
+             cores = 3
+             )
+
+m_pub <- update(m_all, 
+                newdata = data %>% filter(pub == 1))
+```
+```{r}
+pp_check(m_all, ndraws = 100)+
+  ggtitle("Model trained on all of the studies")
+
+pp_check(m_pub, ndraws = 100)+
+  ggtitle("Model trained on published studies")
+```
+```{r}
+summary(m_all)
+summary(m_pub)
+```
+
+### Convergance tests
+```{r}
+models <- list(m_all, m_pub)
+      
+# launch_shinystan(f_m) # - very nice for exploring and diagnosing the model, but opens up in a new window
+
+map(.x = models, ~ mcmc_plot(.x, type = 'trace') + 
+    theme_classic() + 
+    scale_color_manual(values=c("#E66101", "#998EC3", "#542788", "#F1A340")) + 
+    ylab("") + 
+    xlab("Iteration") + 
+    labs(subtitle = 'Trace Plots'))
+
+map(.x = models, ~ mcmc_plot(.x, type = 'rhat_hist'))
+map(.x = models, ~ mcmc_plot(.x, type = 'neff'))
+```
+### Posterior-prior checks
+
+```{r}
+get_variables(m_all)
+
+
+```
+
+```{r}
+pp_update_plot <- function(model){
+
+bind_rows(
+  gather_draws(model, c(b_Intercept, sd_study__Intercept)) %>%
+    mutate(index = 'posterior') %>% 
+    mutate(.variable = if_else(.variable == 'b_Intercept', 'Intercept', 'SD')),
+  gather_draws(model, `prior.*`, regex = T) %>% 
+    mutate(index = 'prior') %>% 
+    mutate(.variable = if_else(.variable == 'prior_Intercept', 'Intercept', 'SD'))
+  ) %>%
+    ggplot(aes(x = .value, fill = index, alpha = 0.3))+
+      geom_density() +
+    facet_grid(~ .variable) +
+    theme_minimal() +
+    guides(alpha = 'none') +
+    scale_fill_manual(name = element_blank(), values = c('red', 'steelblue')) +
+    labs(x = element_blank())
+} 
+
+pp_update_plot(m_all)
+pp_update_plot(m_pub)
+```
+### Comparing estimated and true values:
+
+
+```{r}
+rbind(gather_draws(m_all, c(b_Intercept, sd_study__Intercept)) %>% mean_qi, 
+      gather_draws(m_pub, c(b_Intercept, sd_study__Intercept)) %>% mean_qi) %>% 
+  mutate(t_value = rep(c(0.4, 0.4), times = 2),
+         model = rep(c("all", "pub"), each = 2)) %>% 
+  
+  ggplot(aes(x = model, y = .value, ymin = .lower, ymax = .upper, color = model)) +
+    geom_hline(aes(yintercept = t_value, color = "real parameter value"), linetype = 'dashed') +
+    geom_pointinterval() +
+    facet_grid(~ .variable) +
+    labs(
+      title = "True value vs. model estimate",
+      y = "Estimate",
+      x = element_blank()) +
+    scale_color_manual(name = "Model", values = c(`real parameter value` = 'black', all = 'darkblue', pub = 'darkgreen'), labels = c('real parameter value', 'all studies', 'published studies')) +
+    theme_minimal() +
+    theme(axis.text.x = element_blank())
+```
+### Conclusions:
+
+## Question 2
+
+```{r}
+save.image('a2_part1.Rdata')
+x <- ls()
+x <- x[x != 'data']
+
+rm(list = x)
+
+data <- read_excel('Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx')
+
+glimpse(data)
+head(data)
+
+data2 <- data %>% 
+  select(1:2 | TYPE_OF_TASK | 9:22 | starts_with('PITCH_F0SD')) %>% 
+  mutate_all(~ str_to_lower(.x)) %>% 
+  rename_with(~ str_to_lower(.x) %>% 
+                str_replace_all(c('_sz_sd' = '_sd_sz', '_sz_m' = '_m_sz', 
+                                '_hc_sd' = '_sd_hc', '_hc_m' = '_m_hc')) %>% 
+                str_replace(fixed('_hc'), '__hc') %>% 
+                str_replace(fixed('_sz'), '__sz')
+              )
+
+
+x <- data2 %>% 
+  pivot_longer(cols = 4:21,
+               names_to = c('.value', 'diagnosis'),
+               names_pattern = '(.*)__(..).*')
+
+
+x <- data2 %>% select(4:17) %>%
+  pivot_longer(cols = everything(), 
+               names_to = c('.value', 'diagnosis'),
+               names_sep= '__')
+
+
+# not sure how to do this one
+  #i '__(.cos zeby zaznaczyc ze dokladnie 2).*'
+#check whether it works now! "__(..)_(.+)"
+y <- data2 %>% select(starts_with('PITCH_F0SD')) %>% 
+  pivot_longer(cols = everything(), 
+               names_to = c('.value', 'diagnosis'),
+               names_pattern = '__(..)_(.+)'
+  )
+
+
+head(data2)
+```
+### Fitting the model
+#### Defining the formula
+```{r}
+f <- bf(effect | se(sigma) ~ 1 + (1|study))
+```
+#### Prior only
+```{r}
+get_prior(f, data)
+
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(normal(0, 0.6), class = sd))
+
+```
+
+```{r}
+prior_m <- brm(f,
+                   data,
+                   family = gaussian,
+                   prior = priors,
+                   sample_prior = 'only',
+                   backend = 'cmdstanr',
+                   cores = 3
+                   )
+```
+
+```{r}
+pp_check(prior_m, ndraws = 100)
+```
+
+```{r}
+m <- brm(f, 
+         data,
+         family = gaussian,
+         prior = priors,
+         sample_prior = 'only',
+         backend = 'cmdstanr',
+         cores = 3
+                   )
+```
+```{r}
+pp_check(m, ndraws = 100)
+```
+
