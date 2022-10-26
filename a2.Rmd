@@ -45,25 +45,29 @@ BONUS question: assess the effect of task on the estimates (model comparison wit
 #       --> Compare the 2 models
 
 
+# Questions:
+#   - what happens with sigma? (divergance plots)?
+#   - what does 'nr' or "\r\n \r\n" in education_sz__sd mean?
+
 #to_do:
 #     - (done) does he model the pitch for 2 healthy and schizophrenic participants (how if only one distribution) or just the difference (how if you have to model individual participants as well)?
           #answer: the slides show he just models the difference
 #     - really dumb you have to check stuff like that xd but check whether it really means significance
 #     - (optional) maybe it would be nice to put the type of the bias and the values as function arguments
-#     - do you want model comparision to be wrapped by .variable or model???
 #     - **check what would removing the outliers do to model estimates!**
 
-# Questions:
-```
-1. Simulate data 
-to setup the analysis and gain insight on the structure of the problem. Simulate one dataset of 100 studies (n of participants should follow a normal distribution with mean of 20, sd of 10, but no fewer than 10 participants), with a mean effect size of 0.4, average deviation by study of .4 and measurement error of .8. The data you get should have one row per study, with an effect size mean and standard error.
-Then simulate publication bias (only some of the studies you simulate are likely to be published, which?)
-2. Build a proper bayesian model to analyze the simulated data.
-3. re-run the model on published studies, assess the difference, 
-4. discuss what this implies for your model
-5. remember to use at least one plot to visualize your results. 
-6. BONUS question: do a power/precision analysis: w this kind of sample sizes (participants) how many studies would you need to acquire good precision (e.g. .1 sd in the pop level estimate)
 
+```
+```{r}
+#(done) 1. Simulate data 
+#     to setup the analysis and gain insight on the structure of the problem. Simulate         one dataset of 100 studies (n of participants should follow a normal distribution        with mean of 20, sd of 10, but no fewer than 10 participants), with a mean effect        size of 0.4, average deviation by study of .4 and measurement error of .8. The data       you get should have one row per study, with an effect size mean and standard error.
+#      Then simulate publication bias (only some of the studies you simulate are likely #        to be published, which?)
+# (done) 2.Build a proper bayesian model to analyze the simulated data.
+# (done) 3. re-run the model on published studies, assess the difference, 
+# 4. discuss what this implies for your model
+# (done) 5. remember to use at least one plot to visualize your results. 
+#6. BONUS question: do a power/precision analysis: w this kind of sample sizes ( participants) how many studies would you need to acquire good precision (e.g. .1 sd in the pop level estimate)
+```
 ```{r}
 simulate_data <- function(n = 100, gt_mean = 0.4, gt_sd = 0.4, error = 0.8, seed = 1)
   #expaning the names: n - number of studies, gt stands for 'ground-truth'
@@ -107,6 +111,7 @@ rm(n_tot)
 
 
 ```{r}
+
 effect_hist <- function(data){
   ggplot(data, aes(x = effect)) +
     geom_histogram(binwidth = 0.1, fill = 'darkgreen', color = 'black', alpha = 0.1) +
@@ -266,56 +271,112 @@ bind_rows(gather_draws(m_all, c(b_Intercept, sd_study__Intercept)) %>% mean_qi,
     theme_minimal() +
     theme(axis.text.x = element_blank())
 ```
-### Conclusions:
+### Conclusions - the effect of publication bias:
+  Introducing publication bias resulted in higher estimated mean of the intercept of the effect size, and lower estimated sd of the intercept of the effect size. However, the confidence intervals of the two models considerably overlap for both estimated parameters. In a NHST type approach the difference between the estimates would be considered non-significant. 
+On the other hand, the estimates of the published studies only model  do not include the true parameter values, while the model fitted on all of the studies does.  
+  
+  Since we only have access to published studies in the real data, we can expect the estimated mean of the intercept to be slightly higher and the standard deviation of the Intercept to be slighly lower then 
 
 ## Question 2
+```{r}
+#What is the current evidence for distinctive vocal patterns in schizophrenia? 
+#       - focusing on pitch variability (PITCH_F0SD). 
+
+
+# 1. Describe the data available (studies, participants). 
+# 2. Fit the models
+# 3. visualize and report the findings: 
+    # 3.1 population level effect size;
+    # 3.2 how well studies reflect it; 
+    # 3.3 influential studies, 
+    # 3.4 publication bias. 
+# BONUS question: assess the effect of task on the estimates (model comparison with baseline model)
+```
 
 ```{r}
-save.image('a2_part1.Rdata')
+# saving the object from part 1. In case i have to use them I won't need to rerun the whole thing
+save.image('a2_part1.Rdata') 
+
+rm(list = setdiff(ls(), lsf.str())) # clearing the whole environment except the functions
+rm(effect_hist)
+
+data_raw <- read_excel('Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx')
+
+glimpse(data_raw)
+head(data_raw)
 
 
-rm(list = ls())
 
-data <- read_excel('Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx')
 
-glimpse(data)
-head(data)
-
-data2 <- data %>% 
+# Selecting the relevant variables and transforming the dataframe to long format
+data <- data_raw %>% 
   select(1:2 | TYPE_OF_TASK | 9:22 | starts_with('PITCH_F0SD')) %>% 
-  mutate_all(~ str_to_lower(.x)) %>% 
   rename_with(~ str_to_lower(.x) %>% 
                 str_replace_all(c('_sz_sd' = '_sd_sz', '_sz_m' = '_m_sz', 
                                 '_hc_sd' = '_sd_hc', '_hc_m' = '_m_hc')) %>% 
                 str_replace(fixed('_hc'), '__hc') %>% 
                 str_replace(fixed('_sz'), '__sz')
-              )
-
-
-x <- data2 %>% 
-  pivot_longer(cols = 4:21,
+              ) %>%  #this makes pivot_longer() (later in the pipeline) easier
+  mutate_all(~ str_to_lower(.x) %>%  
+               na_if('nr')) %>% 
+  mutate(across(!1:3, ~ str_replace_all(.x, ',', '.') %>% str_remove_all("[^0-9.]") %>% 
+                        as.numeric)) %>% #there were weird cells like '2,63197\r\n \r\n	' that I needed to fix before converting to numeric
+  add_count(studyid) %>% 
+  mutate(studyid = case_when(
+                     n == 1                           ~ studyid,
+                     n == 2 & lag(studyid) == studyid ~ paste0(studyid, 'b'),
+                     TRUE                             ~ paste0(studyid, 'a')
+                     ), # dealing with repeated studyids
+         n = NULL ) %>%  #deleting the now useless column created by add_count(studyid)
+  pivot_longer(cols = !1:3, 
                names_to = c('.value', 'diagnosis'),
-               names_pattern = '(.*)__(..).*')
-
-
-y <- data2 %>%
-  pivot_longer(cols = 4:21, 
-               names_to = c('.value', 'diagnosis'),
-               names_sep= '__')
-
-
-# not sure how to do this one
-  #i '__(.cos zeby zaznaczyc ze dokladnie 2).*'
-#check whether it works now! "__(..)_(.+)"
-y <- data2 %>% select(starts_with('PITCH_F0SD')) %>% 
-  pivot_longer(cols = everything(), 
-               names_to = c('.value', 'diagnosis'),
-               names_pattern = '__(..)_(.+)'
-  )
-
-
-head(data2)
+               names_sep= '__') %>% 
+  rename('n_diagnosis' = 'sample_size')  %>% 
+  group_by(studyid) %>% 
+  mutate(sample_size = sum(n_diagnosis), .after = n_diagnosis) %>% 
+  ungroup
+  
+head(data)
 ```
+```{r}
+#sample size
+data %>% ggplot(aes(x = sample_size)) +
+  geom_histogram(fill = 'navy', color = 'black', alpha = 0.1) +
+  geom_vline(aes(xintercept = mean(sample_size, na.rm = T), color = 'mean sample size'),
+               linetype = 'dashed', size = 0.6) +
+  theme_minimal() +
+  labs(x = "Sample size \n (both healthy and schizophrenic participants)",
+       y = "Count") +
+  scale_color_manual(name = element_blank(), values = c(`mean sample size` = 'navy'))  
+
+
+data %>% ggplot(aes(x = sample_size)) +
+  geom_histogram(fill = 'navy', color = 'black', alpha = 0.1) +
+  geom_vline(aes(xintercept = mean(sample_size), color = 'mean sample size'),
+               linetype = 'dashed', size = 1)
+
+effect_hist <- function(data){
+  ggplot(data, aes(x = effect)) +
+    geom_histogram(binwidth = 0.1, fill = 'darkgreen', color = 'black', alpha = 0.1) +
+    geom_vline(aes(xintercept = 0.4, color = 'real effect size'),
+               linetype = 'dashed', size = 0.6) +
+    geom_vline(aes(xintercept = mean(effect), color = 'calculated mean effect size'),
+               linetype = 'dashed', size = 0.6) +
+    scale_x_continuous(n.breaks = 8) +
+    labs(x = expression(paste('Effect', ' ', mu)),
+         y = 'Count') +
+    scale_color_manual(name = element_blank(), values = c(`real effect size` = "black", `calculated mean effect size` = "darkgreen")) +
+    theme_minimal()
+}
+
+# sex
+
+# age
+
+# eduation
+```
+
+
 ### Fitting the model
 #### Defining the formula
 ```{r}
