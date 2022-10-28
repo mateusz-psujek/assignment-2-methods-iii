@@ -1,0 +1,230 @@
+---
+title: "a2_part2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(pacman)
+pacman::p_load(tidyverse, brms, tidybayes, conflicted, msm, readxl)
+
+conflict_scout() #checking any possible conflicts between packages
+conflict_prefer('ar', 'brms')
+conflict_prefer('filter', 'dplyr')
+conflict_prefer('lag', 'dplyr') #choosing the packages to prefer if conflict arises
+```
+
+## Question 2
+```{r}
+#What is the current evidence for distinctive vocal patterns in schizophrenia? 
+#       - focusing on pitch variability (PITCH_F0SD). 
+
+
+# 1. Describe the data available (studies, participants). 
+# 2. Fit the models
+# 3. visualize and report the findings: 
+    # 3.1 population level effect size;
+    # 3.2 how well studies reflect it; 
+    # 3.3 influential studies, 
+    # 3.4 publication bias. 
+# BONUS question: assess the effect of task on the estimates (model comparison with baseline model)
+```
+
+```{r}
+# saving the object from part 1. In case we have to use them we won't need to rerun the whole thing
+save.image('a2_part1.Rdata') 
+
+rm(list = setdiff(ls(), lsf.str())) # clearing the whole environment except the functions
+rm(effect_hist)
+
+data_raw <- read_excel('Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx')
+
+glimpse(data_raw)
+head(data_raw)
+
+
+
+# Selecting the relevant variables and transforming the dataframe to long format
+after <- data_raw %>% 
+  select(1:2 | TYPE_OF_TASK | 9:22 | starts_with('PITCH_F0SD')) %>%
+  filter(!(is.na(PITCH_F0SD_HC_M) & is.na(PITCH_F0SD_SZ_M))) %>% 
+  rename_with(~ str_to_lower(.x) %>% 
+                str_replace_all(c('_sz_sd' = '_sd_sz', '_sz_m' = '_m_sz', 
+                                '_hc_sd' = '_sd_hc', '_hc_m' = '_m_hc')) %>% 
+                str_replace(fixed('_hc'), '__hc') %>% 
+                str_replace(fixed('_sz'), '__sz')
+              ) %>%  #this makes pivot_longer() (later in the pipeline) easier
+  mutate_all(~ str_to_lower(.x) %>%  
+               na_if('nr')) %>%
+  add_count(studyid) %>% 
+  mutate(studyid = case_when(
+                     n == 1                           ~ studyid,
+                     n == 2 & lag(studyid) == studyid ~ paste0(studyid, 'b'),
+                     TRUE                             ~ paste0(studyid, 'a')
+                     ), # dealing with repeated studyids
+         n = NULL ) %>%  #deleting the now useless column created by add_count(studyid)
+  pivot_longer(cols = !1:3, 
+               names_to = c('.value', 'diagnosis'),
+               names_sep= '__') %>% 
+  mutate(across(1:4, as_factor),
+         across(!1:3, ~ str_replace_all(.x, ',', '.') %>% str_remove_all("[^0-9.]") %>% as.numeric)) %>% #there were weird cells like '2,63197\r\n \r\n	' that needed to be fixed before converting to numeric)
+  rename('n_diagnosis' = 'sample_size', ) %>% 
+      #   'effect' = 'pitch_f0sd_m',
+       #  'effect_sigma' = 'pitch_f0sd_sd')
+  group_by(studyid) %>% 
+  mutate(sample_size = if_else(TRUE %in% is.na(n_diagnosis),
+                               n_diagnosis[!is.na(n_diagnosis)][[1]],
+                               sum(n_diagnosis)),
+         .after = n_diagnosis) %>% 
+  ungroup
+  
+head(data)
+```
+###### Note:
+We weren't really sure whether NA's in some of the 'HC'conditions rows meant that the information about that condition was unavailable or somehow lost or rather just that the experiment didn't have a condition with only healthy participants. We assumed the second option, so the total sample size in such cases just equals to the sample size of the 'SZ' conditon.
+##### Sample size
+```{r}
+# Mean total sample size
+data %>% filter(diagnosis == 'sz') %>%
+  ggplot(aes(x = sample_size)) +
+    geom_histogram(fill = 'brown', color = 'black', alpha = 0.4) +
+    geom_vline(aes(xintercept = mean(sample_size, na.rm = T), color = 'mean sample size'),
+                 linetype = 'dashed', size = 0.6) +
+    theme_minimal() +
+    labs(title = "Total sample size across the dataset",
+         x = "Sample size \n (total across conditions)",
+         y = "Number of studies") +
+    scale_x_continuous(n.breaks = 10) +
+    scale_color_manual(name = element_blank(), values = c(`mean sample size` = 'brown'))
+
+
+#where the conditions(if present) balanced in terms of size?
+data %>%
+  ggplot(aes(x = studyid, y = n_diagnosis, fill = diagnosis)) +
+    geom_bar(stat = 'identity', alpha = 0.9) +
+    geom_text(aes(label = n_diagnosis), 
+              size = 2.5, 
+              position = position_stack(vjust = 0.3)) +
+    theme_minimal() +
+      labs(title = "Number of participants in each condition by study",
+           x = "Study",
+           y = "Number of participants") +
+      scale_fill_manual(name = element_blank(), 
+                        labels = c('Schizophernic condition', 'Control condition'), 
+                        values = c('steelblue', 'darkolivegreen')) +
+      theme(axis.text.x = element_text(angle = 90))
+
+data %>% 
+  group_by(studyid, diagnosis) %>% 
+  summarise(n_diagnosis = n_diagnosis, sample_size = sample_size, pct = n_diagnosis / sample_size) %>% 
+  ggplot(aes(x = studyid, fill = diagnosis)) +
+    geom_bar(aes(y = pct), stat = 'identity', alpha = 0.9) +
+    geom_hline(aes(yintercept = 0.5), linetype = 'dashed', size = 0.5) +
+    theme_minimal() +
+    labs(title = "Proportion of the two conditions in the total sample size by study",
+         x = "Study",
+         y = "Proportion") +
+    scale_fill_manual(name = element_blank(), 
+                      labels = c('Schizophrenic condition', 'Control condition'), 
+                      values = c('steelblue', 'darkolivegreen')) +
+    theme(axis.text.x = element_text(angle = 90))
+
+
+
+#sum of the samples of each condition
+data %>% 
+  group_by(diagnosis) %>% 
+  summarise(n = sum(n_diagnosis, na.rm = T)) %>% mutate(pct = n / sum(n))
+```
+
+##### Age
+```{r}
+# I split them in two dfs instead of making one, because I realised that makes each value repeat 2, which then makes the plot thicker
+
+data %>% 
+  select(studyid, diagnosis, age_m, age_sd) %>% 
+  pivot_longer(c(age_m, age_sd),
+               names_to = c(".value","age_parameter"),
+               names_sep = "_") %>% 
+              mutate(age_parameter = ifelse(age_parameter =="m", "Age Mean", "Age SD")) %>%                            
+        ggplot(aes(x = diagnosis, y = age, fill = diagnosis))+
+          geom_violin()+
+          geom_boxplot(width = 0.05, fill = "white") +
+          facet_wrap(~age_parameter) +
+          labs(y = NULL) +
+          theme_minimal()
+
+
+
+```
+##### Education
+```{r}
+data %>% 
+  select(studyid, diagnosis, education_m, education_sd) %>% 
+  pivot_longer(c(education_m, education_sd),
+               names_to = c(".value","edu_parameter"),
+               names_sep = "_") %>% 
+  mutate(edu_parameter = ifelse(edu_parameter == "m",
+                                "Years of Education Mean",
+                                "Years of Education SD")) %>%
+  ggplot(aes(x = diagnosis, y = education, fill = diagnosis)) +
+    geom_violin() +
+    geom_boxplot(width = 0.05, fill = "white") +
+    facet_wrap(~edu_parameter)+
+    labs(y = NULL) +
+    theme_minimal()
+
+```
+### Influential studies
+```{r}
+
+ggplot(data, aes(y = effect)) +
+  geom_boxplot()
+
+
+
+```
+### Fitting the model
+#### Defining the formula
+```{r}
+f <- bf(effect | se(effect_sigma) ~ 1 + (1|study))
+```
+#### Prior only
+```{r}
+get_prior(f, data)
+
+priors <- c(prior(normal(0, 0.5), class = Intercept),
+            prior(normal(0, 0.6), class = sd))
+
+```
+
+```{r}
+prior_m <- brm(f,
+                   data,
+                   family = gaussian,
+                   prior = priors,
+                   sample_prior = 'only',
+                   backend = 'cmdstanr',
+                   cores = 3
+                   )
+```
+
+```{r}
+pp_check(prior_m, ndraws = 100)
+```
+
+```{r}
+m <- brm(f, 
+         data,
+         family = gaussian,
+         prior = priors,
+         sample_prior = 'only',
+         backend = 'cmdstanr',
+         cores = 3
+                   )
+```
+```{r}
+pp_check(m, ndraws = 100)
+```
+

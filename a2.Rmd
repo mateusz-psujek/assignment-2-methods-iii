@@ -29,8 +29,39 @@ BONUS question: do a power/precision analysis: w this kind of sample sizes (part
 Use the data from Parola et al (2020) - https://www.dropbox.com/s/0l9ur0gaabr80a8/Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx?dl=0 - focusing on pitch variability (PITCH_F0SD).  Describe the data available (studies, participants). Using the model from question 1 analyze the data, visualize and report the findings: population level effect size; how well studies reflect it; influential studies, publication bias. 
 BONUS question: assess the effect of task on the estimates (model comparison with baseline model)
 
+```{r}
+# arabic digits - simulation
+# ---> model fitting
+# 1. Ground truth level: the real underlying truth  - norm(0.4,0.4)
+# 2. Sample level(Study level: 100 samples(studies) - norm(mu drawn from the above, sd drawn from the above)
+# 3. Participant level: tnorm(20, 10, 10) participants in each study
+# 4. Results level: estimates of regressions based on the participants
+#        -->(I) Fit no. 1 Bayes model: Given the study results what are the estimated true parameters???
+# 5. Published results level: include publication bias filter
+#        -->(II) Fit no. 2 Bayes model: Given the **publilshed** results what are the estimated true parameters???
+#       --> Compare the 2 models
 
-# Question 1
+
+# Questions:
+#   - what happens with sigma? (divergance plots)?
+#   - what does 'nr' or "\r\n \r\n" in education_sz__sd mean?
+#   - do NAs in healthy condition mean that there was no information or it was somehow lost or that it was an experiment that only included schizophrenic participants
+
+#to_do:
+#     - SCALE PITCH_F0SD SO IT'S SAME SCALE AS SIMULATION (cohen's d?)
+#     - really dumb you have to check stuff like that xd but check whether it really means significance
+#     - decide what do do about random effects (estimates for each study), should we plot them and if so how
+
+
+#     - (done) does he model the pitch for 2 healthy and schizophrenic participants (how if only one distribution) or just the difference (how if you have to model individual participants as well)?
+          #answer: the slides show he just models the difference
+#     - (optional) maybe it would be nice to put the type of the bias and the values as function arguments
+#     - (optional in part 1) **check what would removing the outliers do to model estimates!**
+#   
+
+
+```
+## Question 1
 
 ```{r}
 # arabic digits - simulation
@@ -80,10 +111,10 @@ simulate_data <- function(n = 100, gt_mean = 0.4, gt_sd = 0.4, error = 0.8, seed
            n_participants = rtnorm(1, 20, 10, lower = 10) %>% round,
            ind_effects = list(rnorm(n_participants, mean = t_effect, sd = error) %>% round(2)),
            effect = mean(ind_effects),
-           sigma = sd(ind_effects) / sqrt(n_participants), 
-           ci_lower = effect - 1.96 * sigma, # just so it's easier to plot later
-           ci_upper = effect + 1.96 * sigma, 
-           signif = if_else(abs(effect) - 1.96 * sigma > 0, 'yes' , 'no'),
+           effect_sigma = sd(ind_effects) / sqrt(n_participants), 
+           ci_lower = effect - 1.96 * effect_sigma, # just so it's easier to plot later
+           ci_upper = effect + 1.96 * effect_sigma, 
+           signif = if_else(abs(effect) - 1.96 * effect_sigma > 0, 'yes' , 'no'),
            pub = if_else(signif == 'yes' & effect > 0, rbinom(1, 1, 0.9), rbinom(1, 1, 0.1))) %>% 
     ungroup %>% 
     relocate(c(t_effect, n_participants, ind_effects), .after = pub)
@@ -152,7 +183,7 @@ ggplot(aes(x = index, y = effect, fill = index)) +
 rm(check)
 ```
 ```{r}
-f <- bf(effect | se(sigma) ~ 1 + (1|study))
+f <- bf(effect | se(effect_sigma) ~ 1 + (1|study))
 
 get_prior(f, data)
 
@@ -277,6 +308,10 @@ On the other hand, the estimates of the published studies only model  do not inc
   
   Since we only have access to published studies in the real data, we can expect the estimated mean of the intercept to be slightly higher and the standard deviation of the Intercept to be slighly lower then 
 
+
+
+
+
 ## Question 2
 ```{r}
 #What is the current evidence for distinctive vocal patterns in schizophrenia? 
@@ -294,7 +329,7 @@ On the other hand, the estimates of the published studies only model  do not inc
 ```
 
 ```{r}
-# saving the object from part 1. In case i have to use them I won't need to rerun the whole thing
+# saving the object from part 1. In case we have to use them we won't need to rerun the whole thing
 save.image('a2_part1.Rdata') 
 
 rm(list = setdiff(ls(), lsf.str())) # clearing the whole environment except the functions
@@ -307,10 +342,10 @@ head(data_raw)
 
 
 
-
 # Selecting the relevant variables and transforming the dataframe to long format
-data <- data_raw %>% 
-  select(1:2 | TYPE_OF_TASK | 9:22 | starts_with('PITCH_F0SD')) %>% 
+after <- data_raw %>% 
+  select(1:2 | TYPE_OF_TASK | 9:22 | starts_with('PITCH_F0SD')) %>%
+  filter(!(is.na(PITCH_F0SD_HC_M) & is.na(PITCH_F0SD_SZ_M))) %>% 
   rename_with(~ str_to_lower(.x) %>% 
                 str_replace_all(c('_sz_sd' = '_sd_sz', '_sz_m' = '_m_sz', 
                                 '_hc_sd' = '_sd_hc', '_hc_m' = '_m_hc')) %>% 
@@ -318,9 +353,7 @@ data <- data_raw %>%
                 str_replace(fixed('_sz'), '__sz')
               ) %>%  #this makes pivot_longer() (later in the pipeline) easier
   mutate_all(~ str_to_lower(.x) %>%  
-               na_if('nr')) %>% 
-  mutate(across(!1:3, ~ str_replace_all(.x, ',', '.') %>% str_remove_all("[^0-9.]") %>% 
-                        as.numeric)) %>% #there were weird cells like '2,63197\r\n \r\n	' that I needed to fix before converting to numeric
+               na_if('nr')) %>%
   add_count(studyid) %>% 
   mutate(studyid = case_when(
                      n == 1                           ~ studyid,
@@ -331,56 +364,128 @@ data <- data_raw %>%
   pivot_longer(cols = !1:3, 
                names_to = c('.value', 'diagnosis'),
                names_sep= '__') %>% 
-  rename('n_diagnosis' = 'sample_size')  %>% 
+  mutate(across(1:4, as_factor),
+         across(!1:3, ~ str_replace_all(.x, ',', '.') %>% str_remove_all("[^0-9.]") %>% as.numeric)) %>% #there were weird cells like '2,63197\r\n \r\n	' that needed to be fixed before converting to numeric)
+  rename('n_diagnosis' = 'sample_size', ) %>% 
+      #   'effect' = 'pitch_f0sd_m',
+       #  'effect_sigma' = 'pitch_f0sd_sd')
   group_by(studyid) %>% 
-  mutate(sample_size = sum(n_diagnosis), .after = n_diagnosis) %>% 
+  mutate(sample_size = if_else(TRUE %in% is.na(n_diagnosis),
+                               n_diagnosis[!is.na(n_diagnosis)][[1]],
+                               sum(n_diagnosis)),
+         .after = n_diagnosis) %>% 
   ungroup
   
 head(data)
 ```
+###### Note:
+We weren't really sure whether NA's in some of the 'HC'conditions rows meant that the information about that condition was unavailable or somehow lost or rather just that the experiment didn't have a condition with only healthy participants. We assumed the second option, so the total sample size in such cases just equals to the sample size of the 'SZ' conditon.
+##### Sample size
 ```{r}
-#sample size
-data %>% ggplot(aes(x = sample_size)) +
-  geom_histogram(fill = 'navy', color = 'black', alpha = 0.1) +
-  geom_vline(aes(xintercept = mean(sample_size, na.rm = T), color = 'mean sample size'),
-               linetype = 'dashed', size = 0.6) +
-  theme_minimal() +
-  labs(x = "Sample size \n (both healthy and schizophrenic participants)",
-       y = "Count") +
-  scale_color_manual(name = element_blank(), values = c(`mean sample size` = 'navy'))  
+# Mean total sample size
+data %>% filter(diagnosis == 'sz') %>%
+  ggplot(aes(x = sample_size)) +
+    geom_histogram(fill = 'brown', color = 'black', alpha = 0.4) +
+    geom_vline(aes(xintercept = mean(sample_size, na.rm = T), color = 'mean sample size'),
+                 linetype = 'dashed', size = 0.6) +
+    theme_minimal() +
+    labs(title = "Total sample size across the dataset",
+         x = "Sample size \n (total across conditions)",
+         y = "Number of studies") +
+    scale_x_continuous(n.breaks = 10) +
+    scale_color_manual(name = element_blank(), values = c(`mean sample size` = 'brown'))
 
 
-data %>% ggplot(aes(x = sample_size)) +
-  geom_histogram(fill = 'navy', color = 'black', alpha = 0.1) +
-  geom_vline(aes(xintercept = mean(sample_size), color = 'mean sample size'),
-               linetype = 'dashed', size = 1)
+#where the conditions(if present) balanced in terms of size?
+data %>%
+  ggplot(aes(x = studyid, y = n_diagnosis, fill = diagnosis)) +
+    geom_bar(stat = 'identity', alpha = 0.9) +
+    geom_text(aes(label = n_diagnosis), 
+              size = 2.5, 
+              position = position_stack(vjust = 0.3)) +
+    theme_minimal() +
+      labs(title = "Number of participants in each condition by study",
+           x = "Study",
+           y = "Number of participants") +
+      scale_fill_manual(name = element_blank(), 
+                        labels = c('Schizophernic condition', 'Control condition'), 
+                        values = c('steelblue', 'darkolivegreen')) +
+      theme(axis.text.x = element_text(angle = 90))
 
-effect_hist <- function(data){
-  ggplot(data, aes(x = effect)) +
-    geom_histogram(binwidth = 0.1, fill = 'darkgreen', color = 'black', alpha = 0.1) +
-    geom_vline(aes(xintercept = 0.4, color = 'real effect size'),
-               linetype = 'dashed', size = 0.6) +
-    geom_vline(aes(xintercept = mean(effect), color = 'calculated mean effect size'),
-               linetype = 'dashed', size = 0.6) +
-    scale_x_continuous(n.breaks = 8) +
-    labs(x = expression(paste('Effect', ' ', mu)),
-         y = 'Count') +
-    scale_color_manual(name = element_blank(), values = c(`real effect size` = "black", `calculated mean effect size` = "darkgreen")) +
-    theme_minimal()
-}
+data %>% 
+  group_by(studyid, diagnosis) %>% 
+  summarise(n_diagnosis = n_diagnosis, sample_size = sample_size, pct = n_diagnosis / sample_size) %>% 
+  ggplot(aes(x = studyid, fill = diagnosis)) +
+    geom_bar(aes(y = pct), stat = 'identity', alpha = 0.9) +
+    geom_hline(aes(yintercept = 0.5), linetype = 'dashed', size = 0.5) +
+    theme_minimal() +
+    labs(title = "Proportion of the two conditions in the total sample size by study",
+         x = "Study",
+         y = "Proportion") +
+    scale_fill_manual(name = element_blank(), 
+                      labels = c('Schizophrenic condition', 'Control condition'), 
+                      values = c('steelblue', 'darkolivegreen')) +
+    theme(axis.text.x = element_text(angle = 90))
 
-# sex
 
-# age
 
-# eduation
+#sum of the samples of each condition
+data %>% 
+  group_by(diagnosis) %>% 
+  summarise(n = sum(n_diagnosis, na.rm = T)) %>% mutate(pct = n / sum(n))
 ```
 
+##### Age
+```{r}
+# I split them in two dfs instead of making one, because I realised that makes each value repeat 2, which then makes the plot thicker
 
+data %>% 
+  select(studyid, diagnosis, age_m, age_sd) %>% 
+  pivot_longer(c(age_m, age_sd),
+               names_to = c(".value","age_parameter"),
+               names_sep = "_") %>% 
+              mutate(age_parameter = ifelse(age_parameter =="m", "Age Mean", "Age SD")) %>%                            
+        ggplot(aes(x = diagnosis, y = age, fill = diagnosis))+
+          geom_violin()+
+          geom_boxplot(width = 0.05, fill = "white") +
+          facet_wrap(~age_parameter) +
+          labs(y = NULL) +
+          theme_minimal()
+
+
+
+```
+##### Education
+```{r}
+data %>% 
+  select(studyid, diagnosis, education_m, education_sd) %>% 
+  pivot_longer(c(education_m, education_sd),
+               names_to = c(".value","edu_parameter"),
+               names_sep = "_") %>% 
+  mutate(edu_parameter = ifelse(edu_parameter == "m",
+                                "Years of Education Mean",
+                                "Years of Education SD")) %>%
+  ggplot(aes(x = diagnosis, y = education, fill = diagnosis)) +
+    geom_violin() +
+    geom_boxplot(width = 0.05, fill = "white") +
+    facet_wrap(~edu_parameter)+
+    labs(y = NULL) +
+    theme_minimal()
+
+```
+### Influential studies
+```{r}
+
+ggplot(data, aes(y = effect)) +
+  geom_boxplot()
+
+
+
+```
 ### Fitting the model
 #### Defining the formula
 ```{r}
-f <- bf(effect | se(sigma) ~ 1 + (1|study))
+f <- bf(effect | se(effect_sigma) ~ 1 + (1|study))
 ```
 #### Prior only
 ```{r}
