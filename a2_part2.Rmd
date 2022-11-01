@@ -13,6 +13,7 @@ conflict_scout() #checking any possible conflicts between packages
 conflict_prefer('ar', 'brms')
 conflict_prefer('filter', 'dplyr')
 conflict_prefer('lag', 'dplyr') #choosing the packages to prefer if conflict arises
+conflict_prefer('fixed', 'stringr')
 ```
 
 ## Question 2
@@ -45,38 +46,70 @@ head(data_raw)
 
 
 
-# Selecting the relevant variables and transforming the dataframe to long format
-after <- data_raw %>% 
+# How the get an 'effect' variable like in the simulation? 
+#   - 1. calculate cohen's d; seems to require info for both conditions, but then 5 more studies have to be removed leaving only 15. 
+#   - 2. Might also work to change the model and allow it to vary by group (poll to 2 different means) like in assignment 1.
+
+cohens_d <- function(x1, x2, sd1, sd2, n1, n2){
+  mean_diff <- x1 - x2
+  
+  pooled_sd_nominator <- sqrt((n1-1)*sd1^2 + (n2-1)*sd2^2)
+  pooled_sd_denominator <- sqrt(n1 + n2 - 2)
+  
+  pooled_sd <- pooled_sd_nominator / pooled_sd_denominator
+
+  return(mean_diff / pooled_sd)
+}
+
+mean_diff_se <- function(sd1, sd2, n1, n2){
+  sd1 / sqrt(n1) + sd2 / sqrt(n2)
+}
+# I know i'll call these function just once, but I thought it will make the code easier to read
+
+
+
+data <- data_raw %>% 
   select(1:2 | TYPE_OF_TASK | 9:22 | starts_with('PITCH_F0SD')) %>%
-  filter(!(is.na(PITCH_F0SD_HC_M) & is.na(PITCH_F0SD_SZ_M))) %>% 
+  filter(!(is.na(PITCH_F0SD_HC_M) | is.na(PITCH_F0SD_SZ_M))) %>% 
   rename_with(~ str_to_lower(.x) %>% 
                 str_replace_all(c('_sz_sd' = '_sd_sz', '_sz_m' = '_m_sz', 
                                 '_hc_sd' = '_sd_hc', '_hc_m' = '_m_hc')) %>% 
                 str_replace(fixed('_hc'), '__hc') %>% 
                 str_replace(fixed('_sz'), '__sz')
-              ) %>%  #this makes pivot_longer() (later in the pipeline) easier
-  mutate_all(~ str_to_lower(.x) %>%  
-               na_if('nr')) %>%
+              ) %>%  
+  #this makes pivot_longer() (later in the pipeline) easier
   add_count(studyid) %>% 
-  mutate(studyid = case_when(
+  # useful when dealing with repeated studyids (later in the pipeline)
+  mutate(across(everything(), ~ str_to_lower(.x) %>% na_if('nr')),
+         studyid = as.character(studyid),
+         studyid = case_when(
                      n == 1                           ~ studyid,
                      n == 2 & lag(studyid) == studyid ~ paste0(studyid, 'b'),
                      TRUE                             ~ paste0(studyid, 'a')
-                     ), # dealing with repeated studyids
-         n = NULL ) %>%  #deleting the now useless column created by add_count(studyid)
-  pivot_longer(cols = !1:3, 
+                     ), 
+         # dealing with repeated studyids
+         n = NULL,
+         #deleting the now useless column created by add_count(studyid)
+         across(1:3, as_factor),
+         across(!1:3, 
+                ~ str_replace_all(.x, ',', '.') %>% 
+                  str_remove_all("[^0-9.]") %>%
+                  as.numeric),
+          #there were weird cells like '2,63197\r\n \r\n	' that needed to be fixed before converting to numeric)
+        effect = cohens_d(x1 = pitch_f0sd_m__hc, x2 = pitch_f0sd_m__sz,
+                           sd1 = pitch_f0sd_sd__hc, sd2 = pitch_f0sd_sd__sz,
+                           n1 = sample_size__hc, n2 = sample_size__sz),
+        effect_sigma = mean_diff_se(sd1 = pitch_f0sd_sd__hc, sd2 = pitch_f0sd_sd__sz,
+                                    n1 = sample_size__hc, n2 = sample_size__sz),
+        .after = type_of_task
+        ) %>% 
+  pivot_longer(cols = !1:5, 
                names_to = c('.value', 'diagnosis'),
                names_sep= '__') %>% 
-  mutate(across(1:4, as_factor),
-         across(!1:3, ~ str_replace_all(.x, ',', '.') %>% str_remove_all("[^0-9.]") %>% as.numeric)) %>% #there were weird cells like '2,63197\r\n \r\n	' that needed to be fixed before converting to numeric)
-  rename('n_diagnosis' = 'sample_size', ) %>% 
-      #   'effect' = 'pitch_f0sd_m',
-       #  'effect_sigma' = 'pitch_f0sd_sd')
+  mutate(diagnosis = diagnosis %>% as_factor) %>% 
+  rename('n_diagnosis' = 'sample_size') %>%  
   group_by(studyid) %>% 
-  mutate(sample_size = if_else(TRUE %in% is.na(n_diagnosis),
-                               n_diagnosis[!is.na(n_diagnosis)][[1]],
-                               sum(n_diagnosis)),
-         .after = n_diagnosis) %>% 
+  mutate(sample_size = sum(n_diagnosis), .after = n_diagnosis) %>% 
   ungroup
   
 head(data)
@@ -99,7 +132,7 @@ data %>% filter(diagnosis == 'sz') %>%
     scale_color_manual(name = element_blank(), values = c(`mean sample size` = 'brown'))
 
 
-#where the conditions(if present) balanced in terms of size?
+#where the conditions balanced in terms of size?
 data %>%
   ggplot(aes(x = studyid, y = n_diagnosis, fill = diagnosis)) +
     geom_bar(stat = 'identity', alpha = 0.9) +
@@ -179,12 +212,30 @@ data %>%
 ### Influential studies
 ```{r}
 
-ggplot(data, aes(y = effect)) +
-  geom_boxplot()
+ggplot(data %>% filter(diagnosis == 'sz')) +
+  geom_boxplot(aes(x = effect), outlier.color = 'red') +
+  ylim(-1, 1) +
+  xlim(-0.4, 0.4) +
+  xlab("Effect size (Cohen's d)") +
+  theme_minimal() + 
+  theme(axis.title.y = element_blank(), 
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+  
 
 
 
 ```
+```{r}
+fit_data_all <- data %>% 
+  distinct(studyid, effect, effect_sigma) %>% 
+  rename(study = studyid)
+
+fit_data_trimmed <- fit_data_all %>% 
+  filter(abs(effect) < 1.5*IQR(effect))
+```
+
 ### Fitting the model
 #### Defining the formula
 ```{r}
@@ -192,7 +243,7 @@ f <- bf(effect | se(effect_sigma) ~ 1 + (1|study))
 ```
 #### Prior only
 ```{r}
-get_prior(f, data)
+get_prior(f, fit_data_all)
 
 priors <- c(prior(normal(0, 0.5), class = Intercept),
             prior(normal(0, 0.6), class = sd))
@@ -200,31 +251,56 @@ priors <- c(prior(normal(0, 0.5), class = Intercept),
 ```
 
 ```{r}
-prior_m <- brm(f,
-                   data,
+prior_m_all <- brm(f,
+                   fit_data_all,
                    family = gaussian,
                    prior = priors,
                    sample_prior = 'only',
                    backend = 'cmdstanr',
                    cores = 3
                    )
+
+prior_m_trimmed <- brm(f,
+                       fit_data_trimmed,
+                       family = gaussian,
+                       prior = priors,
+                       sample_prior = 'only',
+                       backend = 'cmdstanr',
+                       cores = 3
+                       )
 ```
 
 ```{r}
-pp_check(prior_m, ndraws = 100)
+pp_check(prior_m_all, ndraws = 100)
+pp_check(prior_m_trimmed, ndraws = 100)
 ```
 
 ```{r}
-m <- brm(f, 
-         data,
-         family = gaussian,
-         prior = priors,
-         sample_prior = 'only',
-         backend = 'cmdstanr',
-         cores = 3
-                   )
+m_all <- brm(f, 
+             fit_data_all,
+             family = gaussian,
+             prior = priors,
+             sample_prior = 'only',
+             backend = 'cmdstanr',
+             cores = 3
+             )
+
+m_trimmed <- brm(f, 
+                 fit_data_trimmed,
+                 family = gaussian,
+                 prior = priors,
+                 sample_prior = 'only',
+                 backend = 'cmdstanr',
+                 cores = 3
+                 )
 ```
 ```{r}
-pp_check(m, ndraws = 100)
+pp_check(m_all, ndraws = 100)
+pp_check(m_trimmed, ndraws = 100)
 ```
+### Convergenece checks
+
+### Comparing the models
+
+### Conclusions
 
