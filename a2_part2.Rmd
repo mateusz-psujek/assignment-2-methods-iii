@@ -123,19 +123,20 @@ head(data)
 
 rm(pooled_sd, cohens_d, mean_diff_se)
 ```
+### Describing the data
 ##### Sample size
 ```{r}
 # Mean total sample size
 data %>% filter(diagnosis == 'sz') %>%
   ggplot(aes(x = sample_size)) +
-    geom_histogram(fill = 'brown', color = 'black', alpha = 0.4) +
+    geom_histogram(fill = 'brown', color = 'black', alpha = 0.4, binwidth = 10) +
     geom_vline(aes(xintercept = mean(sample_size, na.rm = T), color = 'mean sample size'),
                  linetype = 'dashed', size = 0.6) +
     theme_minimal() +
     labs(title = "Total sample size across the dataset",
          x = "Sample size \n (total across conditions)",
          y = "Number of studies") +
-    scale_x_continuous(n.breaks = 10) +
+    scale_x_continuous(n.breaks = 14) +
     scale_color_manual(name = element_blank(), values = c(`mean sample size` = 'brown'))
 
 
@@ -175,39 +176,57 @@ data %>%
 #sum of the samples of each condition
 data %>% 
   group_by(diagnosis) %>% 
-  summarise(n = sum(n_diagnosis, na.rm = T)) %>% mutate(pct = n / sum(n))
+  summarise(mean = mean(n_diagnosis) %>% round(2), 
+            n = sum(n_diagnosis, na.rm = T)) %>% 
+  mutate(pct = (n / sum(n)) %>% round(2))
+
+data %>% filter(diagnosis == 'sz') %>% summarise(mean = mean(sample_size))
 ```
+
+After filtering for studies that measured the pitch variability(PITCH_F0SD) for both healthy and schizophrenic conditions the number of studies got reduced to 15. Among the studies the average number of participants in total (both conditions summed) was 77.4, the mean sample size for each condition was 44.13 and 33.27 for schizophrenic and healthy conditions respectively.
+
+Overall, the sizes of the two conditions were roughly balanced. However, some of the studies had considerably different sample sizes (e.g. study 6, 14, 47a, 47b), which might be considered problematic. The total number of participants in each condition across all of the studies was 662 (57% of all participants) and 499 (43% of all participants) for schizophrenic and healthy conditions respectively.
 
 ##### Age
 ```{r}
-# I split them in two dfs instead of making one, because I realised that makes each value repeat 2, which then makes the plot thicker
-
-data %>% 
+age_data <- data %>% 
   select(studyid, diagnosis, age_m, age_sd) %>% 
   pivot_longer(c(age_m, age_sd),
                names_to = c(".value","age_parameter"),
                names_sep = "_") %>% 
-              mutate(age_parameter = ifelse(age_parameter =="m", "Age Mean", "Age SD")) %>%                            
-        ggplot(aes(x = diagnosis, y = age, fill = diagnosis))+
-          geom_violin()+
-          geom_boxplot(width = 0.05, fill = "white") +
-          facet_wrap(~age_parameter) +
-          labs(y = NULL) +
-          theme_minimal()
+              mutate(age_parameter = ifelse(age_parameter =="m", "Age Mean", "Age SD"))
+
+age_data %>% 
+  ggplot(aes(x = diagnosis, y = age, fill = diagnosis))+
+    geom_violin()+
+    geom_boxplot(width = 0.05, fill = "white") +
+    facet_wrap(~age_parameter) +
+    labs(y = NULL) +
+    theme_minimal()
+
+age_data %>% 
+  group_by(diagnosis, age_parameter) %>% 
+  summarise(mean = mean(age, na.rm = T) %>% round(2))
 
 
-
+#rm(age_data)
 ```
+The two groups seems to be balanced in terms of participant's age. The means of the mean age equal to 36.44 and 34.89 for schizophrenic and healthy conditions respectively. The means of the standard deviations of age equal 8.53 and 10.35.
+
+However, as the violin plot shows, the mean age seems to be distributed differently for the two conditions.
+
 ##### Education
 ```{r}
-data %>% 
+edu_data <- data %>% 
   select(studyid, diagnosis, education_m, education_sd) %>% 
   pivot_longer(c(education_m, education_sd),
                names_to = c(".value","edu_parameter"),
                names_sep = "_") %>% 
   mutate(edu_parameter = ifelse(edu_parameter == "m",
                                 "Years of Education Mean",
-                                "Years of Education SD")) %>%
+                                "Years of Education SD"))
+
+edu_data %>% 
   ggplot(aes(x = diagnosis, y = education, fill = diagnosis)) +
     geom_violin() +
     geom_boxplot(width = 0.05, fill = "white") +
@@ -215,7 +234,57 @@ data %>%
     labs(y = NULL) +
     theme_minimal()
 
+edu_data %>% 
+  group_by(diagnosis, edu_parameter) %>% 
+  summarise(mean = mean(education, na.rm = T) %>% round(2))
+
+#rm(edu_data)
 ```
+(We didn't manage to find the correct interpretation of the Education variable. We for now just assumed it refers to the number of years spend in Education)
+
+The two groups seems to be balanced in terms of the length of their education. The means of the mean number of years spend in education equal to 13.02 and 14.02 for schizophrenic and healthy conditions respectively. The means of the standard deviations of number of years spend in education equal 2.32 and 2.26. 
+
+However, as the violin plot shows, the mean number of years in education seems to be distributed differently for the two conditions.
+
+##### Sex
+```{r}#
+#where the conditions balanced in terms of sex
+data %>%
+  ggplot(aes(x = studyid, y = n_diagnosis, fill = diagnosis)) +
+    geom_bar(stat = 'identity', alpha = 0.9) +
+    geom_text(aes(label = n_diagnosis), 
+              size = 2.5, 
+              position = position_stack(vjust = 0.3)) +
+    theme_minimal() +
+      labs(title = "Number of participants in each condition by study",
+           x = "Study",
+           y = "Number of participants") +
+      scale_fill_manual(name = element_blank(), 
+                        labels = c('Schizophernic condition', 'Control condition'), 
+                        values = c('steelblue', 'darkolivegreen')) +
+      theme(axis.text.x = element_text(angle = 90))
+
+data %>% 
+  group_by(studyid, diagnosis) %>% 
+  summarise(n_diagnosis = n_diagnosis, sample_size = sample_size, pct = n_diagnosis / sample_size) %>% 
+  ggplot(aes(x = studyid, fill = diagnosis)) +
+    geom_bar(aes(y = pct), stat = 'identity', alpha = 0.9) +
+    geom_hline(aes(yintercept = 0.5), linetype = 'dashed', size = 0.5) +
+    theme_minimal() +
+    labs(title = "Proportion of the two conditions in the total sample size by study",
+         x = "Study",
+         y = "Proportion") +
+    scale_fill_manual(name = element_blank(), 
+                      labels = c('Schizophrenic condition', 'Control condition'), 
+                      values = c('steelblue', 'darkolivegreen')) +
+    theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+
+
+
 ### Influential studies
 
 ```{r}
@@ -250,7 +319,6 @@ data_trimmed %>%
           axis.text.y = element_blank(),
           axis.ticks.y = element_blank())
 ```
-
 ### Fitting the model
 #### Defining the formula
 ```{r}
