@@ -328,8 +328,8 @@ f <- bf(effect | se(effect_sigma) ~ 1 + (1|study))
 ```{r}
 get_prior(f, data_all)
 
-priors <- c(prior(normal(0, 0.5), class = Intercept),
-            prior(normal(0, 0.8), class = sd))
+priors <- c(prior(normal(0, 0.6), class = Intercept),
+            prior(normal(0, 1), class = sd))
 
 ```
 
@@ -414,16 +414,19 @@ get_variables(m_all)
 
 map(models, pp_update_plot)
 ```
-###### Note
-The posteriors have not gotten much more confident than the priors, which might indicate a problem with the priors being to wide. However, considering the very small sample sizes (n = 15, n = 13 respectively for both models) the lack of confidence is most likely not connected to the priors.
-
-The posterior of the SD for the model fit on all of the studies seems to be constrained by too narrow prior
-
 ### Comparing the models
 ```{r}
+bind_rows(data.frame(fixef(m_all)) %>% mutate(model = "m_all"),
+          data.frame(fixef(m_trimmed)) %>% mutate(model = "m_trimmed")) %>% 
+  ggplot(aes(x = Estimate, y = model, xmin = Q2.5, xmax = Q97.5))+
+    geom_pointrange()+
+    xlab("population level effect size")+
+    ggtitle("95% confidence interval of the estimated population level effect size")+
+    ylab(NULL)+
+    theme_minimal()
+
 
 ```
-
 
 ### Conclusions
 
