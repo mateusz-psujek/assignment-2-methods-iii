@@ -7,7 +7,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 
 library(pacman)
-pacman::p_load(tidyverse, brms, tidybayes, conflicted, msm, readxl)
+pacman::p_load(tidyverse, brms, tidybayes, conflicted, msm, readxl, metafor)
 
 conflict_scout() #checking any possible conflicts between packages
 conflict_prefer('ar', 'brms')
@@ -50,26 +50,29 @@ head(data_raw)
 #   - 1. calculate cohen's d; seems to require info for both conditions, but then 5 more studies have to be removed leaving only 15. 
 #   - 2. Might also work to change the model and allow it to vary by group (poll to 2 different means) like in assignment 1.
 
+```
 
-pooled_sd <- function(sd1, sd2, n1, n2){
-  pooled_sd_nominator <- sqrt((n1-1)*sd1^2 + (n2-1)*sd2^2)
-  pooled_sd_denominator <- sqrt(n1 + n2 - 2)
-  
-  return(pooled_sd_nominator / pooled_sd_denominator)
-  }
 
+```{r}
 
 cohens_d <- function(x1, x2, sd1, sd2, n1, n2){
+  
   mean_diff <- x1 - x2
+  pooled_sd <- sqrt((sd1^2 + sd2^2) / 2)
+  
+  return(mean_diff / pooled_sd)
+}
 
-  return(mean_diff / pooled_sd(sd1, sd2, n1, n2))
-  }
 
 
-mean_diff_se <- function(sd1, sd2, n1, n2){
-  return(pooled_sd(sd1, sd2, n1, n2) / sqrt((n1 + n2)))
-  }
+cohens_d_se <- function(d, sd1, sd2, n1, n2){
 
+  a1 <- (n1 + n2) / (n1*n2)
+  a2 <- d^2 / (2*(n1 + n2 - 2))
+  b <- (n1 + n2) / (n1 + n2 - 2)
+  
+return((a1 + a2)*b)
+}
 # I know i'll call these function just once, but I thought it will make the code easier to read
 
 
@@ -106,8 +109,9 @@ data <- data_raw %>%
                            sd1 = pitch_f0sd_sd__hc, sd2 = pitch_f0sd_sd__sz,
                            n1 = sample_size__hc, n2 = sample_size__sz),
         
-        effect_sigma = mean_diff_se(sd1 = pitch_f0sd_sd__hc, sd2 = pitch_f0sd_sd__sz,
-                                    n1 = sample_size__hc, n2 = sample_size__sz),
+        effect_sigma = cohens_d_se(d = effect,
+                                   sd1 = pitch_f0sd_sd__hc, sd2 = pitch_f0sd_sd__sz,
+                                   n1 = sample_size__hc, n2 = sample_size__sz),
         .after = type_of_task
         ) %>% 
   pivot_longer(cols = !1:5, 
@@ -121,7 +125,7 @@ data <- data_raw %>%
   
 head(data)
 
-rm(pooled_sd, cohens_d, mean_diff_se)
+rm(pooled_sd, cohens_d, cohens_d_se)
 ```
 ### Describing the data
 ##### Sample size
@@ -280,16 +284,11 @@ data %>%
     theme(axis.text.x = element_text(angle = 90))
 
 ```
-
-
-
-
-
 ### Influential studies
 
 ```{r}
 data_all <- data %>% 
-  distinct(studyid, effect, effect_sigma) %>% 
+  distinct(studyid, effect, effect_sigma, sample_size) %>% 
   rename(study = studyid)
 
 data_all %>% 
@@ -308,18 +307,38 @@ data_trimmed <- data_all %>%
          effect < quantile(effect, 0.25) - 1.5*IQR(effect)
           ))
 
-data_trimmed %>% 
-  ggplot() +
-    geom_boxplot(aes(x = effect), outlier.color = 'red') +
-    ylim(-1, 1) +
-    xlim(min(data_all$effect), - min(data_all$effect)) +
-    xlab("Effect size (Cohen's d)") +
-    theme_minimal() + 
-    theme(axis.title.y = element_blank(), 
-          axis.text.y = element_blank(),
-          axis.ticks.y = element_blank())
+mean(data$effect)
+mean(data_trimmed$effect)
+
 ```
-### Fitting the model
+There were two outliers present in the data in terms of effect size. Both values were much larger than what can be usually expected from effect sizes in psychology (-3.38 and 1.92), and substantially impacted the $\bar{x}$ of our small sample.
+
+We decided to create two datasets, one with and one without the recognised outliers to see how big of an impact they would have on the regression estimates.
+
+
+
+### Publication bias
+```{r}
+map(.x = list(data_all, data_trimmed), function(.x){
+  
+ effect_mean <- mean(.x$effect)
+ effect_se <- sd(.x$effect_sigma) / sqrt(length(.x$study))
+  
+  uci <- effect_mean + 1.96*effect_se
+  lci <-  effect_mean - 1.96*effect_se
+  
+  funnel_base(.x) +
+    geom_segment(aes(x = uci, y = min(effect_sigma), xend = uci, yend = max(effect_sigma)), linetype = 'longdash') +
+    geom_segment(aes(x = lci, y = min(effect_sigma), xend = lci, yend = max(effect_sigma)), linetype = 'longdash')
+})
+                   
+```
+There isn't a single study that would have less then 30 participants, and the plot doesn't seem to be symmetrical - much more studies appear over the right side of the triangle (bigger positive effect sizes). 
+This might suggest the presence of publication bias. Smaller studies tend to have bigger standard errors which makes them more likely to be deemed not significant, and a positive effect might be expected because of previous literature.
+Alternatively, the asymmetry might be explained by some methodological differences between small and big sample studies (different measuring technologies and techniques, differences in the analysis process, etc.). 
+More importantly, it has to be noted that the number of studies included is very low (n = 15), and so the influence of random noise in the sample might be substantial.
+
+### Building the models
 #### Defining the formula
 ```{r}
 f <- bf(effect | se(effect_sigma) ~ 1 + (1|study))
@@ -361,7 +380,7 @@ prior_m_trimmed <- brm(f,
 pp_check(prior_m_all, ndraws = 100)
 pp_check(prior_m_trimmed, ndraws = 100)
 ```
-
+#### Fitting the models
 ```{r}
 m_all <- brm(f, 
              data_all,
@@ -392,7 +411,7 @@ pp_check(m_trimmed, ndraws = 100)
 summary(m_all)
 summary(m_trimmed)
 ```
-### Convergenece checks
+#### Convergenece checks
 ```{r}
 models <- list(m_all, m_trimmed)
       
@@ -408,13 +427,13 @@ map(.x = models, ~ mcmc_plot(.x, type = 'trace') +
 map(.x = models, ~ mcmc_plot(.x, type = 'rhat_hist'))
 map(.x = models, ~ mcmc_plot(.x, type = 'neff'))
 ```
-### Posterior - prior update checks
+#### Posterior - prior update checks
 ```{r}
 get_variables(m_all)
 
 map(models, pp_update_plot)
 ```
-### Comparing the models
+#### Comparing the models
 ```{r}
 bind_rows(data.frame(fixef(m_all)) %>% mutate(model = "m_all"),
           data.frame(fixef(m_trimmed)) %>% mutate(model = "m_trimmed")) %>% 

@@ -65,26 +65,24 @@ simulate_data <- function(n = 100, gt_mean = 0.4, gt_sd = 0.4, error = 0.8, seed
   data <- tibble(study = seq(1, n, by = 1)) %>% 
     rowwise %>% 
     mutate(t_effect = rnorm(1, gt_mean, gt_sd) %>% round(2), 
-           n_participants = rtnorm(1, 20, 10, lower = 10) %>% round,
-           ind_effects = list(rnorm(n_participants, mean = t_effect, sd = error) %>% round(2)),
+           sample_size = rtnorm(1, 20, 10, lower = 10) %>% round,
+           ind_effects = list(rnorm(sample_size, mean = t_effect, sd = error) %>% round(2)),
            effect = mean(ind_effects),
-           effect_sigma = sd(ind_effects) / sqrt(n_participants), 
+           effect_sigma = sd(ind_effects) / sqrt(sample_size), 
            ci_lower = effect - 1.96 * effect_sigma, # just so it's easier to plot later
            ci_upper = effect + 1.96 * effect_sigma, 
            signif = if_else(abs(effect) - 1.96 * effect_sigma > 0, 'yes' , 'no'),
            pub = if_else(signif == 'yes' & effect > 0, rbinom(1, 1, 0.9), rbinom(1, 1, 0.1))) %>% 
     ungroup %>% 
-    relocate(c(t_effect, n_participants, ind_effects), .after = pub)
+    relocate(c(t_effect, sample_size, ind_effects), .after = pub)
 
 }
-data <- simulate_data()  
 ```
 ### Checking if all worked fine
 ```{r}
 check <- simulate_data(n = 10000)
 
 check %>% summarise(mean(t_effect), sd(t_effect))
-
 
 
 n_tot <- check %>%
@@ -94,11 +92,14 @@ check %>% filter(pub == 1) %>%
   count(signif == 'yes' & effect > 0, pub) %>%
   mutate(pct = n / n_tot)
 
-rm(n_tot)
+rm(n_tot, check)
 ```
 
 
 ```{r}
+data <- simulate_data()
+data_pub <- data %>% 
+  filter(pub == 1)
 
 effect_hist <- function(data){
   ggplot(data, aes(x = effect)) +
@@ -108,21 +109,21 @@ effect_hist <- function(data){
     geom_vline(aes(xintercept = mean(effect), color = 'calculated mean effect size'),
                linetype = 'dashed', size = 0.6) +
     scale_x_continuous(n.breaks = 8) +
-    labs(x = expression(paste('Effect', ' ', mu)),
+    labs(x = 'Effect size',
          y = 'Count') +
     scale_color_manual(name = element_blank(), values = c(`real effect size` = "black", `calculated mean effect size` = "darkgreen")) +
     theme_minimal()
 }
 
-effect_hist(check) + ggtitle("All studies")
-effect_hist(check %>% filter(pub == 1)) + ggtitle("Published studies")
+effect_hist(data) + ggtitle("All studies")
+effect_hist(data_pub) + ggtitle("Published studies")
 
 ```
 
 
 ```{r}
-rbind(check %>% mutate(index = 'all'),
-      check %>% filter(pub == 1) %>% mutate(index = 'published')) %>% 
+rbind(data %>% mutate(index = 'all'),
+      data_pub %>% mutate(index = 'published')) %>% 
 ggplot(aes(x = index, y = effect, fill = index)) + 
   geom_boxplot(alpha = 0.3) +
   theme_minimal() +
@@ -130,15 +131,73 @@ ggplot(aes(x = index, y = effect, fill = index)) +
   scale_fill_manual(values = c('navy', 'darkgreen'), 
                     labels = c('all studies', 'published studies'), 
                     name = element_blank()) +
+  ylab('Effect size') +
   theme(axis.text.x = element_blank(),
         axis.title.x = element_blank(),
         legend.position = 'top')
-
-
-
-
-rm(check)
 ```
+
+```{r}
+funnel_base <- function(data, n_small_big_cutoff = 30, null = 0){
+  effect_mean <-  mean(data$effect)
+
+  line_data = tibble(
+    se_line =  seq(0, max(data$effect_sigma), by = 0.001),
+    
+    line_u95 =  effect_mean + 1.96*se_line,
+    line_l95 =  effect_mean - 1.96*se_line,
+    
+    line_u99 =  effect_mean + 3.29*se_line,
+    line_l99 =  effect_mean -3.29*se_line)
+
+  data %>% mutate(`Sample size` = if_else(sample_size < n_small_big_cutoff, 'small', 'big')) %>% 
+    ggplot(aes(x = effect, y = effect_sigma)) +
+      scale_y_reverse() +
+      geom_point(aes(shape = `Sample size` )) +
+      geom_line(aes(x = line_u95, y = se_line), linetype = 'dashed', data = line_data) +
+      geom_line(aes(x = line_l95, y = se_line), linetype = 'dashed', data = line_data) +
+      geom_line(aes(x = line_u99, y = se_line), linetype = 'dotted', data = line_data) +
+      geom_line(aes(x = line_l99, y = se_line), linetype = 'dotted', data = line_data) +
+      geom_segment(aes(x = null, y = 0, xend = null, yend = max(effect_sigma), colour = 'Null hypothesis'),
+                 linetype = 'dashed',
+                 size = 0.6,
+                 alpha = 0.1) +
+      theme_minimal() +
+      scale_shape_manual(values = c('circle', 'circle open')) +
+      scale_color_manual(values = c(`Null hypothesis` = 'darkred')) +
+      labs(x = 'Effect size',
+           y = 'Standard Error')
+}
+```
+
+
+
+```{r}
+map(.x = list(data, data_pub), .f = function(.x){
+  observed_mean <- mean(.x$effect)
+  true_mean <- 0.4
+  
+  funnel_base(.x) +
+    geom_segment(aes(x = observed_mean, 
+                     y = 0, 
+                     xend = observed_mean, 
+                     yend = max(effect_sigma),  
+                     colour = 'Mean sample effect size'),
+                 linetype = 'solid',
+                 size = 1) +
+    geom_segment(aes(x = true_mean, 
+                     y = 0, 
+                     xend = true_mean, 
+                     yend = max(effect_sigma),
+                     colour = 'True parameter value'),
+                 linetype = 'dashed',
+                 size = 1)
+    scale_colour_manual(values = c(`Mean sample effect size` = 'black', 
+                                   `True parameter value` = 'grey',
+                                   `Null hypothesis` = 'darkred'))
+})
+```
+### Defining the formula and priors
 ```{r}
 f <- bf(effect | se(effect_sigma) ~ 1 + (1|study))
 
@@ -158,7 +217,6 @@ prior_m_all <- brm(f,
                    backend = 'cmdstanr',
                    cores = 3
                    )
-
 ```
 
 ```{r}
@@ -166,6 +224,7 @@ pp_check(prior_m_all, ndraws = 100)
 
 summary(prior_m_all)
 ```
+### Fitting the models
 ```{r}
 m_all <- brm(f, 
              data,
