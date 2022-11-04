@@ -2,7 +2,9 @@
 title: "Assignment 2 - Meta-analysis of pitch in schizophrenia"
 author: "Riccardo Fusaroli"
 date: "16/8/2022"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -107,7 +109,7 @@ map2(
          x = 'Effect size',
          y = 'Count') +
     scale_color_manual(name = element_blank(), values = c(`real effect size` = "black", `calculated mean effect size` = "darkgreen")) +
-    theme_minimal() +
+    theme_minimal()
 })
 ```
 
@@ -601,50 +603,51 @@ The two groups seems to be balanced in terms of the length of their education. T
 However, as the violin plot shows, the mean number of years in education seems to be distributed differently for the two conditions.
 
 ##### Sex
-```{r}#
+```{r}
+#were the conditions balanced in terms of sex?
 
-sex_data <- data %>%
-  select(studyid, diagnosis, male, female) %>% 
+sex_data <- data %>% 
+  select(male, female, diagnosis, n_diagnosis, studyid) %>% 
     pivot_longer(c(male, female),
-                 names_to = c(".value", "sex"),
-                 names_pattern('(.*)'))
-  
+      names_to = "sex",
+      values_to = "participants") %>% 
+  mutate(sex = sex %>% as_factor)
 
-
-#where the conditions balanced in terms of sex
-data %>%
-  ggplot(aes(x = studyid, y = n_diagnosis, fill = diagnosis)) +
-    geom_bar(stat = 'identity', alpha = 0.9) +
-    geom_text(aes(label = n_diagnosis), 
-              size = 2.5, 
-              position = position_stack(vjust = 0.3)) +
+sex_data %>%
+  ggplot(aes(x = diagnosis, y = participants, fill = sex, colour = sex)) +
+    geom_col(stat = "identity") +
+    ylab("number of participants")+
     theme_minimal() +
-      labs(title = "Number of participants in each condition by study",
-           x = "Study",
-           y = "Number of participants") +
-      scale_fill_manual(name = element_blank(), 
-                        labels = c('Schizophernic condition', 'Control condition'), 
-                        values = c('steelblue', 'darkolivegreen')) +
-      theme(axis.text.x = element_text(angle = 90))
+      labs(title = "Sex distribution for both conditions")
 
-data %>% 
-  group_by(studyid, diagnosis) %>% 
-  summarise(n_diagnosis = n_diagnosis, sample_size = sample_size, pct = n_diagnosis / sample_size) %>% 
-  ggplot(aes(x = studyid, fill = diagnosis)) +
-    geom_bar(aes(y = pct), stat = 'identity', alpha = 0.9) +
-    geom_hline(aes(yintercept = 0.5), linetype = 'dashed', size = 0.5) +
+sex_data %>%
+  ggplot(aes(x = studyid, y = participants, fill = sex, colour = sex)) +
+    geom_col(stat = "identity") +
+    ylab("number of participants")+
     theme_minimal() +
-    labs(title = "Proportion of the two conditions in the total sample size by study",
-         x = "Study",
-         y = "Proportion") +
-    scale_fill_manual(name = element_blank(), 
-                      labels = c('Schizophrenic condition', 'Control condition'), 
-                      values = c('steelblue', 'darkolivegreen')) +
-    theme(axis.text.x = element_text(angle = 90))
+      labs(title = "Sex distribution for each study")
+    
+sex_data %>%
+  ggplot(aes(x = diagnosis, y = participants, fill = sex, colour = sex)) +
+    geom_col(stat = 'identity', position = "fill") +
+    scale_y_continuous(labels = scales::percent)+
+    ylab("number of participants")+
+    theme_minimal() +
+    labs(title = "Sex distribution as percentage")
 
+sex_data %>% 
+  group_by(diagnosis, sex) %>% 
+  summarise(n = sum(participants, na.rm = TRUE)) %>% 
+  mutate(pct = n /sum(n)*100)
 ```
-### Influential studies
+It appears that the distribution of sex is not equal. In the healthy control population, the ratio is lightly skewed, with an absolute number of 229 females to 276 males, equal to 45.3% to 54.7% of that population. Across the schizophrenic population, the values are more imbalanced with absolute numbers of 178 females and 488 males, or 26.7% to 73.3%.
 
+The distribution also varies across studies, with almost all studies (excluding nr. 6 and 15) sampling visibly more male than female participants. Study 22 seems not include any female participants (perhaps by design, we were unable to find further information)
+
+NOTE: as study 9 doesn't include a gender distribution, these values do not entirely represent the sample.
+
+
+### Influential studies
 ```{r}
 data_all <- data %>% 
   distinct(studyid, effect, effect_sigma, sample_size) %>% 
