@@ -29,98 +29,40 @@ BONUS question: do a power/precision analysis: w this kind of sample sizes (part
 Use the data from Parola et al (2020) - https://www.dropbox.com/s/0l9ur0gaabr80a8/Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx?dl=0 - focusing on pitch variability (PITCH_F0SD).  Describe the data available (studies, participants). Using the model from question 1 analyze the data, visualize and report the findings: population level effect size; how well studies reflect it; influential studies, publication bias. 
 BONUS question: assess the effect of task on the estimates (model comparison with baseline model)
 
-```{r}
-# arabic digits - simulation
-# ---> model fitting
-# 1. Ground truth level: the real underlying truth  - norm(0.4,0.4)
-# 2. Sample level(Study level: 100 samples(studies) - norm(mu drawn from the above, sd drawn from the above)
-# 3. Participant level: tnorm(20, 10, 10) participants in each study
-# 4. Results level: estimates of regressions based on the participants
-#        -->(I) Fit no. 1 Bayes model: Given the study results what are the estimated true parameters???
-# 5. Published results level: include publication bias filter
-#        -->(II) Fit no. 2 Bayes model: Given the **publilshed** results what are the estimated true parameters???
-#       --> Compare the 2 models
-
-
-# Questions:
-#   - what happens with sigma? (divergance plots)?
-#   - what does 'nr' or "\r\n \r\n" in education_sz__sd mean?
-#   - do NAs in healthy condition mean that there was no information or it was somehow lost or that it was an experiment that only included schizophrenic participants
-
-#to_do:
-#     - SCALE PITCH_F0SD SO IT'S SAME SCALE AS SIMULATION (cohen's d?)
-#     - really dumb you have to check stuff like that xd but check whether it really means significance
-#     - decide what do do about random effects (estimates for each study), should we plot them and if so how
-
-
-#     - (done) does he model the pitch for 2 healthy and schizophrenic participants (how if only one distribution) or just the difference (how if you have to model individual participants as well)?
-          #answer: the slides show he just models the difference
-#     - (optional) maybe it would be nice to put the type of the bias and the values as function arguments
-#     - (optional in part 1) **check what would removing the outliers do to model estimates!**
-#   
-
-
-```
 ## Question 1
 
 ```{r}
-# arabic digits - simulation
-# ---> model fitting
 # 1. Ground truth level: the real underlying truth  - norm(0.4,0.4)
 # 2. Sample level(Study level: 100 samples(studies) - norm(mu drawn from the above, sd drawn from the above)
 # 3. Participant level: tnorm(20, 10, 10) participants in each study
 # 4. Results level: estimates of regressions based on the participants
-#        -->(I) Fit no. 1 Bayes model: Given the study results what are the estimated true parameters???
+#        -->(I) Fit no. 1 Bayes model: Given the study results what are the estimated true parameters?
 # 5. Published results level: include publication bias filter
-#        -->(II) Fit no. 2 Bayes model: Given the **publilshed** results what are the estimated true parameters???
+#        -->(II) Fit no. 2 Bayes model: Given the **publilshed** results what are the estimated true parameters?
 #       --> Compare the 2 models
 
-
-# Questions:
-#   - what happens with sigma? (divergance plots)?
-#   - what does 'nr' or "\r\n \r\n" in education_sz__sd mean?
-
-#to_do:
-#     - (done) does he model the pitch for 2 healthy and schizophrenic participants (how if only one distribution) or just the difference (how if you have to model individual participants as well)?
-          #answer: the slides show he just models the difference
-#     - really dumb you have to check stuff like that xd but check whether it really means significance
-#     - (optional) maybe it would be nice to put the type of the bias and the values as function arguments
-#     - **check what would removing the outliers do to model estimates!**
-
-
-```
-```{r}
-#(done) 1. Simulate data 
-#     to setup the analysis and gain insight on the structure of the problem. Simulate         one dataset of 100 studies (n of participants should follow a normal distribution        with mean of 20, sd of 10, but no fewer than 10 participants), with a mean effect        size of 0.4, average deviation by study of .4 and measurement error of .8. The data       you get should have one row per study, with an effect size mean and standard error.
-#      Then simulate publication bias (only some of the studies you simulate are likely #        to be published, which?)
-# (done) 2.Build a proper bayesian model to analyze the simulated data.
-# (done) 3. re-run the model on published studies, assess the difference, 
-# 4. discuss what this implies for your model
-# (done) 5. remember to use at least one plot to visualize your results. 
-#6. BONUS question: do a power/precision analysis: w this kind of sample sizes ( participants) how many studies would you need to acquire good precision (e.g. .1 sd in the pop level estimate)
 ```
 ```{r}
 simulate_data <- function(n = 100, gt_mean = 0.4, gt_sd = 0.4, error = 0.8, seed = 1)
-  #expaning the names: n - number of studies, gt stands for 'ground-truth'
+  # n - number of studies, gt stands for 'ground-truth'
   {
   set.seed(seed)
     
   data <- tibble(study = seq(1, n, by = 1)) %>% 
     rowwise %>% 
     mutate(t_effect = rnorm(1, gt_mean, gt_sd) %>% round(2), 
-           n_participants = rtnorm(1, 20, 10, lower = 10) %>% round,
-           ind_effects = list(rnorm(n_participants, mean = t_effect, sd = error) %>% round(2)),
+           sample_size = rtnorm(1, 20, 10, lower = 10) %>% round,
+           ind_effects = list(rnorm(sample_size, mean = t_effect, sd = error) %>% round(2)),
            effect = mean(ind_effects),
-           effect_sigma = sd(ind_effects) / sqrt(n_participants), 
+           effect_sigma = sd(ind_effects) / sqrt(sample_size), 
            ci_lower = effect - 1.96 * effect_sigma, # just so it's easier to plot later
            ci_upper = effect + 1.96 * effect_sigma, 
            signif = if_else(abs(effect) - 1.96 * effect_sigma > 0, 'yes' , 'no'),
            pub = if_else(signif == 'yes' & effect > 0, rbinom(1, 1, 0.9), rbinom(1, 1, 0.1))) %>% 
     ungroup %>% 
-    relocate(c(t_effect, n_participants, ind_effects), .after = pub)
+    relocate(c(t_effect, sample_size, ind_effects), .after = pub)
 
 }
-data <- simulate_data()  
 ```
 ### Checking if all worked fine
 ```{r}
@@ -129,21 +71,31 @@ check <- simulate_data(n = 10000)
 check %>% summarise(mean(t_effect), sd(t_effect))
 
 
-
 n_tot <- check %>%
   count(signif == 'yes' & effect > 0) %>%
   pull(n)
+
 check %>% filter(pub == 1) %>%
   count(signif == 'yes' & effect > 0, pub) %>%
   mutate(pct = n / n_tot)
 
-rm(n_tot)
+rm(n_tot, check)
 ```
 
 
 ```{r}
+data <- simulate_data()
+data_pub <- data %>% 
+  filter(pub == 1)
 
-effect_hist <- function(data){
+dfs <- list(data, data_pub)
+```
+
+
+```{r}
+map2(
+  .x = dfs, .y = c("All studies", "Published studies"),
+  .f = function(.x, .y){
   ggplot(data, aes(x = effect)) +
     geom_histogram(binwidth = 0.1, fill = 'darkgreen', color = 'black', alpha = 0.1) +
     geom_vline(aes(xintercept = 0.4, color = 'real effect size'),
@@ -151,21 +103,18 @@ effect_hist <- function(data){
     geom_vline(aes(xintercept = mean(effect), color = 'calculated mean effect size'),
                linetype = 'dashed', size = 0.6) +
     scale_x_continuous(n.breaks = 8) +
-    labs(x = expression(paste('Effect', ' ', mu)),
+    labs(title = .y,
+         x = 'Effect size',
          y = 'Count') +
     scale_color_manual(name = element_blank(), values = c(`real effect size` = "black", `calculated mean effect size` = "darkgreen")) +
-    theme_minimal()
-}
-
-effect_hist(check) + ggtitle("All studies")
-effect_hist(check %>% filter(pub == 1)) + ggtitle("Published studies")
-
+    theme_minimal() +
+})
 ```
 
 
 ```{r}
-rbind(check %>% mutate(index = 'all'),
-      check %>% filter(pub == 1) %>% mutate(index = 'published')) %>% 
+rbind(data %>% mutate(index = 'all'),
+      data_pub %>% mutate(index = 'published')) %>% 
 ggplot(aes(x = index, y = effect, fill = index)) + 
   geom_boxplot(alpha = 0.3) +
   theme_minimal() +
@@ -173,15 +122,73 @@ ggplot(aes(x = index, y = effect, fill = index)) +
   scale_fill_manual(values = c('navy', 'darkgreen'), 
                     labels = c('all studies', 'published studies'), 
                     name = element_blank()) +
+  ylab('Effect size') +
   theme(axis.text.x = element_blank(),
         axis.title.x = element_blank(),
         legend.position = 'top')
-
-
-
-
-rm(check)
 ```
+
+```{r}
+funnel_plot <- function(data, n_small_big_cutoff = 30, null = 0){
+  effect_mean <-  mean(data$effect)
+
+  line_data = tibble(
+    se_line =  seq(0, max(data$effect_sigma), by = 0.001),
+    
+    line_u95 =  effect_mean + 1.96*se_line,
+    line_l95 =  effect_mean - 1.96*se_line,
+    
+    line_u99 =  effect_mean + 3.29*se_line,
+    line_l99 =  effect_mean -3.29*se_line)
+
+  data %>% mutate(`Sample size` = if_else(sample_size < n_small_big_cutoff, 'small', 'big')) %>% 
+    ggplot(aes(x = effect, y = effect_sigma)) +
+      scale_y_reverse() +
+      geom_point(aes(shape = `Sample size` )) +
+      geom_line(aes(x = line_u95, y = se_line), linetype = 'dashed', data = line_data) +
+      geom_line(aes(x = line_l95, y = se_line), linetype = 'dashed', data = line_data) +
+      geom_line(aes(x = line_u99, y = se_line), linetype = 'dotted', data = line_data) +
+      geom_line(aes(x = line_l99, y = se_line), linetype = 'dotted', data = line_data) +
+      geom_segment(aes(x = null, y = 0, xend = null, yend = max(effect_sigma), colour = 'Null hypothesis'),
+                 linetype = 'dashed',
+                 size = 0.6,
+                 alpha = 0.1) +
+      theme_minimal() +
+      scale_shape_manual(values = c('circle', 'circle open')) +
+      scale_color_manual(values = c(`Null hypothesis` = 'darkred')) +
+      labs(x = 'Effect size',
+           y = 'Standard Error')
+}
+```
+
+
+
+```{r}
+map(.x = dfs, .f = function(.x){
+  observed_mean <- mean(.x$effect)
+  true_mean <- 0.4
+  
+  funnel_plot(.x) +
+    geom_segment(aes(x = observed_mean, 
+                     y = 0, 
+                     xend = observed_mean, 
+                     yend = max(effect_sigma),  
+                     colour = 'Mean sample effect size'),
+                 linetype = 'solid',
+                 size = 1) +
+    geom_segment(aes(x = true_mean, 
+                     y = 0, 
+                     xend = true_mean, 
+                     yend = max(effect_sigma),
+                     colour = 'True parameter value'),
+                 linetype = 'dashed',
+                 size = 1)
+    scale_colour_manual(values = c(`Mean sample effect size` = 'black', 
+                                   `True parameter value` = 'grey',
+                                   `Null hypothesis` = 'darkred'))
+})
+```
+### Defining the formula and priors
 ```{r}
 f <- bf(effect | se(effect_sigma) ~ 1 + (1|study))
 
@@ -201,7 +208,6 @@ prior_m_all <- brm(f,
                    backend = 'cmdstanr',
                    cores = 3
                    )
-
 ```
 
 ```{r}
@@ -209,6 +215,7 @@ pp_check(prior_m_all, ndraws = 100)
 
 summary(prior_m_all)
 ```
+### Fitting the models
 ```{r}
 m_all <- brm(f, 
              data,
@@ -220,7 +227,9 @@ m_all <- brm(f,
              )
 
 m_pub <- update(m_all, 
-                newdata = data %>% filter(pub == 1))
+                newdata = data_pub)
+
+models <- list(m_all, m_pub)
 ```
 ```{r}
 pp_check(m_all, ndraws = 100)+
@@ -236,7 +245,6 @@ summary(m_pub)
 
 ### Convergance tests
 ```{r}
-models <- list(m_all, m_pub)
       
 # launch_shinystan(f_m) # - very nice for exploring and diagnosing the model, but opens up in a new window
 
@@ -254,7 +262,6 @@ map(.x = models, ~ mcmc_plot(.x, type = 'neff'))
 
 ```{r}
 get_variables(m_all)
-
 
 ```
 
@@ -278,40 +285,93 @@ bind_rows(
     labs(x = element_blank())
 } 
 
-pp_update_plot(m_all)
-pp_update_plot(m_pub)
+map(models, pp_update_plot)
 ```
 ### Comparing estimated and true values:
+```{r}
+pop_effects_plot <- function(models, model_names, null = 0)
+  # models must be a list (but not a vector) of models
+  {
+  
+  plot_data <- tibble()
+  
+  plot_data <- map2_df(
+    .x = models, .y = model_names,
+    .f = function(.x, .y){
+        bind_rows(plot_data,
+                gather_draws(.x, c(b_Intercept, sd_study__Intercept)) %>%
+                  mean_qi %>%
+                  mutate(model = .y)
+                )
+    })
+  
+  plot_data %>% 
+    ggplot(aes(x = .value, y = model, xmin = .lower, xmax = .upper)) +
+      geom_pointrange() + 
+      theme_minimal() +
+      labs(x = NULL,
+           y = NULL,
+           title = "Pupulation level estimates",
+           subtitle = "95% confidence interval of the estimated parameter values") +
+      facet_wrap(vars(.variable), nrow = 2) +
+      geom_vline(data = filter(plot_data, .variable == 'b_Intercept'),
+                 aes(xintercept = null), linetype = 'dashed', color = 'darkred', size = 0.5)
+      
+}
+```
+
+```{r}
+pop_effects_plot(models = models, model_names = c('Without publication bias', 'With publication bias')) +
+  geom_vline(aes(xintercept = 0.4, colour = 'True parameter value'), linetype = 'dashed',) + 
+  scale_colour_manual(values = c(`True parameter value` = 'darkseagreen4'))
+```
+
 
 
 ```{r}
-bind_rows(gather_draws(m_all, c(b_Intercept, sd_study__Intercept)) %>% mean_qi, 
-      gather_draws(m_pub, c(b_Intercept, sd_study__Intercept)) %>% mean_qi) %>% 
-  mutate(t_value = rep(c(0.4, 0.4), times = 2),
-         model = rep(c("all", "pub"), each = 2)) %>% 
+rand_effects_plot <- function(models, model_names, null = 0)
+  # models must be a list (but not a vector) of models
+  {
   
-  ggplot(aes(x = model, y = .value, ymin = .lower, ymax = .upper, color = model)) +
-    geom_hline(aes(yintercept = t_value, color = "real parameter value"), linetype = 'dashed') +
-    geom_pointinterval() +
-    facet_grid(~ .variable) +
-    labs(
-      title = "True value vs. model estimate",
-      y = "Estimate",
-      x = element_blank()) +
-    scale_color_manual(name = "Model", values = c(`real parameter value` = 'black', all = 'darkblue', pub = 'darkgreen'), labels = c('real parameter value', 'all studies', 'published studies')) +
-    theme_minimal() +
-    theme(axis.text.x = element_blank())
+  plot_data <- tibble()
+  
+  plot_data <- map2_df(
+    .x = models, .y = model_names,
+    ~ bind_rows(plot_data,
+                gather_draws(.x, r_study[study, parameter]) %>% mean_qi %>% mutate(model = .y)
+                ) %>% 
+      mutate(colour = if_else(null < .upper & null > .lower, 'darkseagreen4', 'darkred'))
+)
+  
+  plot_data %>% 
+    ggplot(aes(x = .value, y = study, xmin = .lower, xmax = .upper)) +
+      geom_point(aes(colour = colour)) +
+      geom_linerange() +
+      theme_minimal() +
+      labs(x = NULL,
+           y = 'Study',
+           title = "Random effects",
+           subtitle = "95% confidence interval of the estimated Intercept") +
+    geom_vline(xintercept = null, linetype = 'dashed', color = 'darkred', size = 1) +
+    scale_colour_identity() +
+    facet_wrap(vars(model))
+  
+}
+```
+```{r fig.height = 8}
+rand_effects_plot(models = models, model_names = c('Without publication bias', 'With publication bias'))
+
 ```
 ### Conclusions - the effect of publication bias:
   Introducing publication bias resulted in higher estimated mean of the intercept of the effect size, and lower estimated sd of the intercept of the effect size. However, the confidence intervals of the two models considerably overlap for both estimated parameters. In a NHST type approach the difference between the estimates would be considered non-significant. 
 On the other hand, the estimates of the published studies only model  do not include the true parameter values, while the model fitted on all of the studies does.  
   
   Since we only have access to published studies in the real data, we can expect the estimated mean of the intercept to be slightly higher and the standard deviation of the Intercept to be slighly lower then 
-
-
-
-
-
+  
+```{r}
+save.image('a2_part1.Rdata') 
+# saving the object from part 1. In case i have to use them we won't need to rerun the whole thing
+```
 ## Question 2
 ```{r}
 #What is the current evidence for distinctive vocal patterns in schizophrenia? 
@@ -327,76 +387,114 @@ On the other hand, the estimates of the published studies only model  do not inc
     # 3.4 publication bias. 
 # BONUS question: assess the effect of task on the estimates (model comparison with baseline model)
 ```
+```{r}
+rm(list = setdiff(ls(), lsf.str())) 
+# clearing the whole environment except the functions
+```
+
 
 ```{r}
-# saving the object from part 1. In case we have to use them we won't need to rerun the whole thing
-save.image('a2_part1.Rdata') 
-
-rm(list = setdiff(ls(), lsf.str())) # clearing the whole environment except the functions
-rm(effect_hist)
-
 data_raw <- read_excel('Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx')
 
 glimpse(data_raw)
 head(data_raw)
 
 
+```
 
-# Selecting the relevant variables and transforming the dataframe to long format
-after <- data_raw %>% 
+
+```{r}
+
+cohens_d <- function(x1, x2, sd1, sd2, n1, n2){
+  
+  mean_diff <- x1 - x2
+  pooled_sd <- sqrt((sd1^2 + sd2^2) / 2)
+  
+  return(mean_diff / pooled_sd)
+}
+
+
+
+cohens_d_se <- function(d, sd1, sd2, n1, n2){
+
+  a1 <- (n1 + n2) / (n1*n2)
+  a2 <- d^2 / (2*(n1 + n2 - 2))
+  b <- (n1 + n2) / (n1 + n2 - 2)
+  
+return((a1 + a2)*b)
+}
+# I know i'll call these function just once, but i thought it will make the code easier to read
+
+
+
+data <- data_raw %>% 
   select(1:2 | TYPE_OF_TASK | 9:22 | starts_with('PITCH_F0SD')) %>%
-  filter(!(is.na(PITCH_F0SD_HC_M) & is.na(PITCH_F0SD_SZ_M))) %>% 
+  filter(!(is.na(PITCH_F0SD_HC_M) | is.na(PITCH_F0SD_SZ_M))) %>% 
   rename_with(~ str_to_lower(.x) %>% 
                 str_replace_all(c('_sz_sd' = '_sd_sz', '_sz_m' = '_m_sz', 
                                 '_hc_sd' = '_sd_hc', '_hc_m' = '_m_hc')) %>% 
                 str_replace(fixed('_hc'), '__hc') %>% 
                 str_replace(fixed('_sz'), '__sz')
-              ) %>%  #this makes pivot_longer() (later in the pipeline) easier
-  mutate_all(~ str_to_lower(.x) %>%  
-               na_if('nr')) %>%
+              ) %>%  
+  #this makes pivot_longer() (later in the pipeline) easier
   add_count(studyid) %>% 
-  mutate(studyid = case_when(
+  # useful when dealing with repeated studyids (later in the pipeline)
+  mutate(across(everything(), ~ str_to_lower(.x) %>% na_if('nr')),
+         studyid = as.character(studyid),
+         studyid = case_when(
                      n == 1                           ~ studyid,
                      n == 2 & lag(studyid) == studyid ~ paste0(studyid, 'b'),
                      TRUE                             ~ paste0(studyid, 'a')
-                     ), # dealing with repeated studyids
-         n = NULL ) %>%  #deleting the now useless column created by add_count(studyid)
-  pivot_longer(cols = !1:3, 
+                     ), 
+         # dealing with repeated studyids
+         n = NULL,
+         #deleting the now useless column created by add_count(studyid)
+         across(1:3, as_factor),
+         across(!1:3, 
+                ~ str_replace_all(.x, ',', '.') %>% 
+                  str_remove_all("[^0-9.]") %>%
+                  as.numeric),
+          #there were weird cells like '2,63197\r\n \r\n	' that needed to be fixed before converting to numeric)
+        effect = cohens_d(x1 = pitch_f0sd_m__hc, x2 = pitch_f0sd_m__sz,
+                           sd1 = pitch_f0sd_sd__hc, sd2 = pitch_f0sd_sd__sz,
+                           n1 = sample_size__hc, n2 = sample_size__sz),
+        
+        effect_sigma = cohens_d_se(d = effect,
+                                   sd1 = pitch_f0sd_sd__hc, sd2 = pitch_f0sd_sd__sz,
+                                   n1 = sample_size__hc, n2 = sample_size__sz),
+        .after = type_of_task
+        ) %>% 
+  pivot_longer(cols = !1:5, 
                names_to = c('.value', 'diagnosis'),
                names_sep= '__') %>% 
-  mutate(across(1:4, as_factor),
-         across(!1:3, ~ str_replace_all(.x, ',', '.') %>% str_remove_all("[^0-9.]") %>% as.numeric)) %>% #there were weird cells like '2,63197\r\n \r\n	' that needed to be fixed before converting to numeric)
-  rename('n_diagnosis' = 'sample_size', ) %>% 
-      #   'effect' = 'pitch_f0sd_m',
-       #  'effect_sigma' = 'pitch_f0sd_sd')
+  mutate(diagnosis = diagnosis %>% as_factor) %>% 
+  rename('n_diagnosis' = 'sample_size') %>%  
   group_by(studyid) %>% 
-  mutate(sample_size = if_else(TRUE %in% is.na(n_diagnosis),
-                               n_diagnosis[!is.na(n_diagnosis)][[1]],
-                               sum(n_diagnosis)),
-         .after = n_diagnosis) %>% 
+  mutate(sample_size = sum(n_diagnosis, na.rm = T), .after = n_diagnosis) %>% 
   ungroup
   
 head(data)
+
+rm(cohens_d, cohens_d_se)
 ```
-###### Note:
-We weren't really sure whether NA's in some of the 'HC'conditions rows meant that the information about that condition was unavailable or somehow lost or rather just that the experiment didn't have a condition with only healthy participants. We assumed the second option, so the total sample size in such cases just equals to the sample size of the 'SZ' conditon.
+### Describing the data
 ##### Sample size
 ```{r}
 # Mean total sample size
 data %>% filter(diagnosis == 'sz') %>%
   ggplot(aes(x = sample_size)) +
-    geom_histogram(fill = 'brown', color = 'black', alpha = 0.4) +
+    geom_histogram(fill = 'brown', color = 'black', alpha = 0.4, binwidth = 10) +
     geom_vline(aes(xintercept = mean(sample_size, na.rm = T), color = 'mean sample size'),
                  linetype = 'dashed', size = 0.6) +
     theme_minimal() +
     labs(title = "Total sample size across the dataset",
          x = "Sample size \n (total across conditions)",
          y = "Number of studies") +
-    scale_x_continuous(n.breaks = 10) +
+    scale_x_continuous(n.breaks = 14) +
     scale_color_manual(name = element_blank(), values = c(`mean sample size` = 'brown'))
 
 
-#where the conditions(if present) balanced in terms of size?
+#where the conditions balanced in terms of size?
 data %>%
   ggplot(aes(x = studyid, y = n_diagnosis, fill = diagnosis)) +
     geom_bar(stat = 'identity', alpha = 0.9) +
@@ -432,39 +530,57 @@ data %>%
 #sum of the samples of each condition
 data %>% 
   group_by(diagnosis) %>% 
-  summarise(n = sum(n_diagnosis, na.rm = T)) %>% mutate(pct = n / sum(n))
+  summarise(mean = mean(n_diagnosis) %>% round(2), 
+            n = sum(n_diagnosis, na.rm = T)) %>% 
+  mutate(pct = (n / sum(n)) %>% round(2))
+
+data %>% filter(diagnosis == 'sz') %>% summarise(mean = mean(sample_size))
 ```
+
+After filtering for studies that measured the pitch variability(PITCH_F0SD) for both healthy and schizophrenic conditions the number of studies got reduced to 15. Among the studies the average number of participants in total (both conditions summed) was 77.4, the mean sample size for each condition was 44.13 and 33.27 for schizophrenic and healthy conditions respectively.
+
+Overall, the sizes of the two conditions were roughly balanced. However, some of the studies had considerably different sample sizes (e.g. study 6, 14, 47a, 47b), which might be considered problematic. The total number of participants in each condition across all of the studies was 662 (57% of all participants) and 499 (43% of all participants) for schizophrenic and healthy conditions respectively.
 
 ##### Age
 ```{r}
-# I split them in two dfs instead of making one, because I realised that makes each value repeat 2, which then makes the plot thicker
-
-data %>% 
+age_data <- data %>% 
   select(studyid, diagnosis, age_m, age_sd) %>% 
   pivot_longer(c(age_m, age_sd),
                names_to = c(".value","age_parameter"),
                names_sep = "_") %>% 
-              mutate(age_parameter = ifelse(age_parameter =="m", "Age Mean", "Age SD")) %>%                            
-        ggplot(aes(x = diagnosis, y = age, fill = diagnosis))+
-          geom_violin()+
-          geom_boxplot(width = 0.05, fill = "white") +
-          facet_wrap(~age_parameter) +
-          labs(y = NULL) +
-          theme_minimal()
+              mutate(age_parameter = ifelse(age_parameter =="m", "Age Mean", "Age SD"))
+
+age_data %>% 
+  ggplot(aes(x = diagnosis, y = age, fill = diagnosis))+
+    geom_violin()+
+    geom_boxplot(width = 0.05, fill = "white") +
+    facet_wrap(~age_parameter) +
+    labs(y = NULL) +
+    theme_minimal()
+
+age_data %>% 
+  group_by(diagnosis, age_parameter) %>% 
+  summarise(mean = mean(age, na.rm = T) %>% round(2))
 
 
-
+rm(age_data)
 ```
+The two groups seems to be balanced in terms of participant's age. The means of the mean age equal to 36.44 and 34.89 for schizophrenic and healthy conditions respectively. The means of the standard deviations of age equal 8.53 and 10.35.
+
+However, as the violin plot shows, the mean age seems to be distributed differently for the two conditions.
+
 ##### Education
 ```{r}
-data %>% 
+edu_data <- data %>% 
   select(studyid, diagnosis, education_m, education_sd) %>% 
   pivot_longer(c(education_m, education_sd),
                names_to = c(".value","edu_parameter"),
                names_sep = "_") %>% 
   mutate(edu_parameter = ifelse(edu_parameter == "m",
                                 "Years of Education Mean",
-                                "Years of Education SD")) %>%
+                                "Years of Education SD"))
+
+edu_data %>% 
   ggplot(aes(x = diagnosis, y = education, fill = diagnosis)) +
     geom_violin() +
     geom_boxplot(width = 0.05, fill = "white") +
@@ -472,56 +588,204 @@ data %>%
     labs(y = NULL) +
     theme_minimal()
 
+edu_data %>% 
+  group_by(diagnosis, edu_parameter) %>% 
+  summarise(mean = mean(education, na.rm = T) %>% round(2))
+
+rm(edu_data)
+```
+(We didn't manage to find the correct interpretation of the Education variable. We for now just assumed it refers to the number of years spend in Education)
+
+The two groups seems to be balanced in terms of the length of their education. The means of the mean number of years spend in education equal to 13.02 and 14.02 for schizophrenic and healthy conditions respectively. The means of the standard deviations of number of years spend in education equal 2.32 and 2.26. 
+
+However, as the violin plot shows, the mean number of years in education seems to be distributed differently for the two conditions.
+
+##### Sex
+```{r}#
+
+sex_data <- data %>%
+  select(studyid, diagnosis, male, female) %>% 
+    pivot_longer(c(male, female),
+                 names_to = c(".value", "sex"),
+                 names_pattern('(.*)'))
+  
+
+
+#where the conditions balanced in terms of sex
+data %>%
+  ggplot(aes(x = studyid, y = n_diagnosis, fill = diagnosis)) +
+    geom_bar(stat = 'identity', alpha = 0.9) +
+    geom_text(aes(label = n_diagnosis), 
+              size = 2.5, 
+              position = position_stack(vjust = 0.3)) +
+    theme_minimal() +
+      labs(title = "Number of participants in each condition by study",
+           x = "Study",
+           y = "Number of participants") +
+      scale_fill_manual(name = element_blank(), 
+                        labels = c('Schizophernic condition', 'Control condition'), 
+                        values = c('steelblue', 'darkolivegreen')) +
+      theme(axis.text.x = element_text(angle = 90))
+
+data %>% 
+  group_by(studyid, diagnosis) %>% 
+  summarise(n_diagnosis = n_diagnosis, sample_size = sample_size, pct = n_diagnosis / sample_size) %>% 
+  ggplot(aes(x = studyid, fill = diagnosis)) +
+    geom_bar(aes(y = pct), stat = 'identity', alpha = 0.9) +
+    geom_hline(aes(yintercept = 0.5), linetype = 'dashed', size = 0.5) +
+    theme_minimal() +
+    labs(title = "Proportion of the two conditions in the total sample size by study",
+         x = "Study",
+         y = "Proportion") +
+    scale_fill_manual(name = element_blank(), 
+                      labels = c('Schizophrenic condition', 'Control condition'), 
+                      values = c('steelblue', 'darkolivegreen')) +
+    theme(axis.text.x = element_text(angle = 90))
+
 ```
 ### Influential studies
+
 ```{r}
+data_all <- data %>% 
+  distinct(studyid, effect, effect_sigma, sample_size) %>% 
+  rename(study = studyid)
 
-ggplot(data, aes(y = effect)) +
-  geom_boxplot()
+data_all %>% 
+  ggplot() +
+    geom_boxplot(aes(x = effect), outlier.color = 'red') +
+    ylim(-1, 1) +
+    xlim(min(data_all$effect), - min(data_all$effect)) +
+    xlab("Effect size (Cohen's d)") +
+    theme_minimal() + 
+    theme(axis.title.y = element_blank(), 
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank())
+
+data_trimmed <- data_all %>% 
+  filter(!(effect > quantile(effect, 0.75) + 1.5*IQR(effect) | 
+         effect < quantile(effect, 0.25) - 1.5*IQR(effect)
+          ))
 
 
+dfs <- list(data_all, data_trimmed)
 
+map(dfs, ~ mean(.x$effect))
 ```
-### Fitting the model
+There were two outliers present in the data in terms of effect size. Both values were much larger than what can be usually expected from effect sizes in psychology (-3.38 and 1.92), and substantially impacted the $\bar{x}$ of our small sample.
+
+We decided to create two datasets, one with and one without the recognised outliers to see how big of an impact they would have on the regression estimates.
+
+
+### Publication bias
+```{r}
+map(.x = dfs, function(.x){
+  
+ effect_mean <- mean(.x$effect)
+ effect_se <- sd(.x$effect_sigma) / sqrt(length(.x$study))
+  
+  uci <- effect_mean + 1.96*effect_se
+  lci <-  effect_mean - 1.96*effect_se
+  
+  funnel_plot(.x) +
+    geom_segment(aes(x = uci, y = min(effect_sigma), xend = uci, yend = max(effect_sigma)), linetype = 'longdash') +
+    geom_segment(aes(x = lci, y = min(effect_sigma), xend = lci, yend = max(effect_sigma)), linetype = 'longdash')
+})
+                   
+```
+There isn't a single study that would have less then 30 participants, and the plot doesn't seem to be symmetrical - much more studies appear over the right side of the triangle (bigger positive effect sizes). 
+This might suggest the presence of publication bias. Smaller studies tend to have bigger standard errors which makes them more likely to be deemed not significant, and a positive effect might be expected because of previous literature.
+Alternatively, the asymmetry might be explained by some methodological differences between small and big sample studies (different measuring technologies and techniques, differences in the analysis process, etc.). 
+More importantly, it has to be noted that the number of studies included is very low (n = 15), and so the influence of random noise in the sample might be substantial.
+
+### Building the models
 #### Defining the formula
 ```{r}
 f <- bf(effect | se(effect_sigma) ~ 1 + (1|study))
 ```
 #### Prior only
 ```{r}
-get_prior(f, data)
+get_prior(f, data_all)
 
-priors <- c(prior(normal(0, 0.5), class = Intercept),
-            prior(normal(0, 0.6), class = sd))
+priors <- c(prior(normal(0, 0.6), class = Intercept),
+            prior(normal(0, 1), class = sd))
 
 ```
 
 ```{r}
-prior_m <- brm(f,
-                   data,
+prior_m_all <- brm(f,
+                   data_all,
                    family = gaussian,
                    prior = priors,
                    sample_prior = 'only',
                    backend = 'cmdstanr',
-                   cores = 3
-                   )
+                   cores = 3,
+                   control = list(
+                     adapt_delta = 0.9,
+                     max_treedepth = 20))
 ```
 
 ```{r}
-pp_check(prior_m, ndraws = 100)
+pp_check(prior_m_all, ndraws = 100)
+```
+```{r}
+summary(prior_m_all)
 ```
 
+#### Fitting the models
 ```{r}
-m <- brm(f, 
-         data,
-         family = gaussian,
-         prior = priors,
-         sample_prior = 'only',
-         backend = 'cmdstanr',
-         cores = 3
-                   )
+m_all <- brm(f, 
+             data_all,
+             family = gaussian,
+             prior = priors,
+             sample_prior = T,
+             backend = 'cmdstanr',
+             cores = 3,
+             control = list(
+               adapt_delta = 0.9,
+               max_treedepth = 20))
+
+m_trimmed <- update(m_all,
+                    newdata = data_trimmed)
 ```
 ```{r}
-pp_check(m, ndraws = 100)
+pp_check(m_all, ndraws = 100)
+pp_check(m_trimmed, ndraws = 100)
+
+summary(m_all)
+summary(m_trimmed)
 ```
+#### Convergenece checks
+```{r}
+models <- list(m_all, m_trimmed)
+      
+# launch_shinystan(f_m) # - very nice for exploring and diagnosing the model, but opens up in a new window
+
+map(models, ~ mcmc_plot(.x, type = 'trace') + 
+    theme_classic() + 
+    scale_color_manual(values=c("#E66101", "#998EC3", "#542788", "#F1A340")) + 
+    ylab("") + 
+    xlab("Iteration") + 
+    labs(subtitle = 'Trace Plots'))
+
+map(models, ~ mcmc_plot(.x, type = 'rhat_hist'))
+map(models, ~ mcmc_plot(.x, type = 'neff'))
+```
+#### Posterior - prior update checks
+```{r}
+map(models, pp_update_plot)
+```
+### Comparing the models
+#### Population effects
+```{r}
+model_names <- c('With outliers', 'Without outliers')
+
+pop_effects_plot(models, model_names)
+
+```
+#### Random effects 
+```{r}
+rand_effects_plot(models, model_names)
+```
+
+### Conclusions
 

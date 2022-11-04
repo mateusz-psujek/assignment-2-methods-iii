@@ -236,7 +236,7 @@ m_all <- brm(f,
              )
 
 m_pub <- update(m_all, 
-                newdata = data %>% filter(pub == 1))
+                newdata = data_pub)
 ```
 ```{r}
 pp_check(m_all, ndraws = 100)+
@@ -317,6 +317,135 @@ bind_rows(gather_draws(m_all, c(b_Intercept, sd_study__Intercept)) %>% mean_qi,
     scale_color_manual(name = "Model", values = c(`real parameter value` = 'black', all = 'darkblue', pub = 'darkgreen'), labels = c('real parameter value', 'all studies', 'published studies')) +
     theme_minimal() +
     theme(axis.text.x = element_blank())
+```
+```{r}
+pop_effects_plot <- function(models, model_names, null = 0)
+  # models must be a list (but not a vector) of models
+  {
+  
+  plot_data <- tibble()
+  
+  plot_data <- map2_df(
+    .x = models, .y = model_names,
+    .f = function(.x, .y){
+        bind_rows(plot_data,
+                gather_draws(.x, c(b_Intercept, sd_study__Intercept)) %>%
+                  mean_qi %>%
+                  mutate(model = .y)
+                )
+    })
+  
+  plot_data %>% 
+    ggplot(aes(x = .value, y = model, xmin = .lower, xmax = .upper)) +
+      geom_pointrange() +
+      geom_vline(xintercept = null, linetype = 'dashed', color = 'darkred', size = 0.5) + 
+      theme_minimal() +
+      labs(x = NULL,
+           y = NULL,
+           title = "Pupulation level estimates",
+           subtitle = "95% confidence interval of the estimated parameter values") +
+      facet_wrap(vars(.variable), nrow = 2)
+      
+}
+```
+
+```{r}
+pop_effects_plot(models = list(m_all, m_pub), model_names = c('Without publication bias', 'With publication bias')) +
+  geom_vline(aes(xintercept = 0.4, colour = 'True parameter value'), linetype = 'dashed',) + 
+  scale_colour_manual(values = c(`True parameter value` = 'darkseagreen4'))
+```
+
+
+
+```{r}
+rand_effects_plot <- function(models, model_names, null = 0)
+  # models must be a list (but not a vector) of models
+  {
+  
+  plot_data <- tibble()
+  
+  plot_data <- map2_df(
+    .x = models, .y = model_names,
+    ~ bind_rows(plot_data,
+                gather_draws(.x, r_study[study, parameter]) %>% mean_qi %>% mutate(model = .y)
+                ) %>% 
+      mutate(colour = if_else(null < .upper & null > .lower, 'darkseagreen4', 'darkred'))
+)
+  
+  plot_data %>% 
+    ggplot(aes(x = .value, y = study, xmin = .lower, xmax = .upper)) +
+      geom_point(aes(colour = colour)) +
+      geom_linerange() +
+      labs(x = NULL,
+           y = 'Study',
+           title = "Random effects",
+           subtitle = "95% confidence interval of the estimated Intercept") +
+    geom_vline(xintercept = null, linetype = 'dashed', color = 'darkred', size = 1) +
+    scale_colour_identity() +
+    facet_wrap(vars(model))
+  
+}
+```
+```{r fig.height = 8}
+rand_effects_plot(models = list(m_all, m_pub), model_names = c('Without publication bias', 'With publication bias'))
+
+```
+```{r}
+ind_t_vs_est <- function(model){
+
+t_value <- sim_data %>% ungroup %>% filter(visit == 1)
+t_value <- rbind(
+    t_value %>% select(ind_int) %>% rename('t_value' = ind_int),
+    t_value %>% select(ind_slope) %>% rename('t_value' = ind_slope)
+  )
+
+ind_t_vs_est <- model %>% recover_types(sim_data) %>% gather_draws(r_id[id, term]) %>%
+  mean_qi(.width = 0.95) %>% 
+  select(!c(.variable, .point, .interval, .width)) %>% 
+  rename_with(.cols = !c(term, id), ~ paste0("est_", .x) %>% str_remove_all(fixed('.')))%>% 
+  mutate(across(where(is.numeric), exp)) %>% 
+  cbind(t_value) %>% 
+  mutate(accuracy = ifelse(t_value < est_upper & t_value > est_lower, 'accurate', 'inaccurate'),
+         diagnosis = rep(c('asd', 'td'), each = 200)) 
+
+map(.x = ind_t_vs_est %>% group_split(term),
+    .f = ~
+      ggplot(.x, aes(x = as.numeric(id), y = est_value, color = accuracy)) +
+        geom_point(aes(shape = diagnosis), size = 3) +
+        geom_pointrange(aes(ymin = est_lower, ymax = est_upper)) +
+        scale_color_manual(values=c('green', 'red')) + 
+        labs(title = 'True individual effects vs. model estimates',
+             subtitle = paste0("'", .x$term, "'"),
+             x = 'ID',
+             y = 'Estimated value with 95% CI')
+  )
+}
+```
+```{r}
+
+plot_data <- tibble()
+
+plot_data <- map2_df(
+    .x = list(m_all, m_pub), .y = c('Without publication bias', 'With publication bias'),
+    ~ bind_rows(plot_data,
+                gather_draws(.x, r_study[study, parameter]) %>% mean_qi %>% mutate(model = .y)
+                )
+    )
+ 
+plot_data <- plot_data %>% 
+      mutate(
+        t_value = c(data$t_effect, data_pub$t_effect),
+        accuracy = if_else(t_value < .upper & t_value > .lower, 'Accurate', 'Inaccurate'))
+  
+plot_data %>% 
+   ggplot(aes(x = .value, y = study, xmax = .upper, xmin = .lower, colour = accuracy)) +
+     geom_pointrange() +
+     scale_color_manual(values = c('darkseagreen4', 'darkred')) +
+     labs(title = 'True effect sizes vs. model estimates',
+          subtitle = '95% confidence intervals of the estimated Intercepts', 
+          x = NULL,
+          y = 'Study')
+
 ```
 ### Conclusions - the effect of publication bias:
   Introducing publication bias resulted in higher estimated mean of the intercept of the effect size, and lower estimated sd of the intercept of the effect size. However, the confidence intervals of the two models considerably overlap for both estimated parameters. In a NHST type approach the difference between the estimates would be considered non-significant. 

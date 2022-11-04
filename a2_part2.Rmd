@@ -429,11 +429,10 @@ map(.x = models, ~ mcmc_plot(.x, type = 'neff'))
 ```
 #### Posterior - prior update checks
 ```{r}
-get_variables(m_all)
-
 map(models, pp_update_plot)
 ```
-#### Comparing the models
+### Comparing the models
+#### Population effects
 ```{r}
 bind_rows(data.frame(fixef(m_all)) %>% mutate(model = "m_all"),
           data.frame(fixef(m_trimmed)) %>% mutate(model = "m_trimmed")) %>% 
@@ -446,6 +445,7 @@ bind_rows(data.frame(fixef(m_all)) %>% mutate(model = "m_all"),
 
 
 ```
+#### Individual effects 
 
 ### Conclusions
 
